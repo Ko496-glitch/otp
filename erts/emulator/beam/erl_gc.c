@@ -154,17 +154,17 @@ static int adjust_after_fullsweep(Process *p, int need, Eterm *objv, int nobj);
 static void shrink_new_heap(Process *p, Uint new_sz, Eterm *objv, int nobj);
 static void grow_new_heap(Process *p, Uint new_sz, Eterm* objv, int nobj);
 static void sweep_off_heap(Process *p, int fullsweep);
-static void offset_heap(Eterm *hp, Uint sz, Sint offs, const char* area, Uint area_sz);
+static void offset_heap(Eterm *hp, Uint sz, Sint offs, const char* area, Uint area_sz, const void *dst_cap);
 static void offset_stack(Eterm *stack, Uint sz,
-                         Sint heap_offset, const char *heap_area, Uint heap_area_sz,
-                         Sint stack_offset, const char *stack_area, Uint stack_area_sz);
-static void offset_heap_ptr(Eterm* hp, Uint sz, Sint offs, const char *area, Uint area_sz);
+                         Sint heap_offset, const char *heap_area, Uint heap_area_sz, const void *heap_dst_cap,
+                         Sint stack_offset, const char *stack_area, Uint stack_area_sz, const void *stack_dst_cap);
+static void offset_heap_ptr(Eterm* hp, Uint sz, Sint offs, const char *area, Uint area_sz, const void *dst_cap);
 static void offset_rootset(Process *p,
-                           Sint heap_offs, const char *heap_area, Uint heap_area_sz,
-                           Sint stack_offs, const char *stack_area, Uint stack_area_sz,
+                           Sint heap_offs, const char *heap_area, Uint heap_area_sz, const void *heap_dst_cap,
+                           Sint stack_offs, const char *stack_area, Uint stack_area_sz, const void *stack_dst_cap,
                            Eterm* objv, int nobj);
-static void offset_off_heap(Process *p, Sint offs, const char *area, Uint area_sz);
-static void offset_mqueue(Process *p, Sint offs, const char *area, Uint area_sz);
+static void offset_off_heap(Process *p, Sint offs, const char *area, Uint area_sz, const void *dst_cap);
+static void offset_mqueue(Process *p, Sint offs, const char *area, Uint area_sz, const void *dst_cap);
 static int has_reached_max_heap_size(Process *p, Uint total_heap_size);
 static int reached_max_heap_size(Process *p, Uint total_heap_size,
                                  Uint extra_heap_size, Uint extra_old_heap_size);
@@ -388,19 +388,43 @@ erts_heap_sizes(Process* p)
     return res;
 }
 
-void 
+void
 erts_offset_heap(Eterm* hp, Uint sz, Sint offs, Eterm* low, Eterm* high)
 {
-    offset_heap(hp, sz, offs, (char*) low, ((char *)high)-((char *)low));
+    offset_heap(hp, sz, offs, (char*) low, ((char *)high)-((char *)low), hp);
 }
 
-void 
-erts_offset_heap_ptr(Eterm* hp, Uint sz, Sint offs, 
-		     Eterm* low, Eterm* high)
+void
+erts_offset_heap_ptr(Eterm* hp, Uint sz, Sint offs,
+                     Eterm* low, Eterm* high)
 {
-    offset_heap_ptr(hp, sz, offs, (char *) low, ((char *)high)-((char *)low));
+    offset_heap_ptr(hp, sz, offs, (char *) low, ((char *)high)-((char *)low), hp);
 }
 
+
+#if defined(__CHERI_PURE_CAPABILITY__)
+static ERTS_INLINE Eterm
+erts_cheri_relocate_term(Eterm val, Sint offs, const void *dst_cap)
+{
+    Eterm tag = val & _TAG_PRIMARY_MASK;
+    size_t old_addr = __builtin_cheri_address_get(val) & ~(size_t)TAG_PTR_MASK__;
+    size_t new_addr = old_addr + ((size_t)offs * sizeof(Eterm));
+    return (Eterm)__builtin_cheri_address_set((Eterm)dst_cap, new_addr | (size_t)tag);
+}
+
+static ERTS_INLINE void *
+erts_cheri_relocate_ptr(const void *old_ptr, Sint offs, const void *dst_cap)
+{
+    size_t old_addr = __builtin_cheri_address_get(old_ptr);
+    size_t new_addr = old_addr + ((size_t)offs * sizeof(Eterm));
+    return __builtin_cheri_address_set((void *)dst_cap, new_addr);
+}
+#define GC_OFFSET_PTR(val, offs, dst_cap) erts_cheri_relocate_term((val), (offs), (dst_cap))
+#define GC_OFFSET_RAW_PTR(uptr, offs, dst_cap) (*(uptr) = (Eterm *)erts_cheri_relocate_ptr(*(uptr), (offs), (dst_cap)))
+#else
+#define GC_OFFSET_PTR(val, offs, dst_cap) offset_ptr((val), (offs))
+#define GC_OFFSET_RAW_PTR(uptr, offs, dst_cap) (*(uptr) += (offs))
+#endif
 
 #define ptr_within(ptr, low, high) ((ptr) < (high) && (ptr) >= (low))
 
@@ -1100,10 +1124,10 @@ garbage_collect_hibernate(Process* p, int check_long_gc)
     FLAGS(p) &= ~F_FORCE_GC;
     p->live_hf_end = ERTS_INVALID_HFRAG_PTR;
 
-    offset_heap(final_heap, heap_size, heap_offset, heap_area, heap_area_sz);
+        offset_heap(final_heap, heap_size, heap_offset, heap_area, heap_area_sz, final_heap);
     offset_rootset(p,
-                   heap_offset, heap_area, heap_area_sz,
-                   stack_offset, stack_area, stack_area_sz,
+                   heap_offset, heap_area, heap_area_sz, final_heap,
+                   stack_offset, stack_area, stack_area_sz, final_stack,
                    p->arg_reg, p->arity);
 
     if (erts_frame_layout == ERTS_FRAME_LAYOUT_FP_RA) {
@@ -1235,11 +1259,11 @@ erts_garbage_collect_literals(Process* p, Eterm* literals,
     temp_lit = (Eterm *) erts_alloc(ERTS_ALC_T_TMP, byte_lit_size);
     sys_memcpy(temp_lit, literals, byte_lit_size);
     offs = temp_lit - literals;
-    offset_heap(temp_lit, lit_size, offs, (char *) literals, byte_lit_size);
-    offset_heap(p->heap, p->htop - p->heap, offs, (char *) literals, byte_lit_size);
+        offset_heap(temp_lit, lit_size, offs, (char *) literals, byte_lit_size, temp_lit);
+    offset_heap(p->heap, p->htop - p->heap, offs, (char *) literals, byte_lit_size, temp_lit);
     offset_rootset(p,
-                   offs, (char *) literals, byte_lit_size,
-                   0, NULL, 0,
+                   offs, (char *) literals, byte_lit_size, temp_lit,
+                   0, NULL, 0, NULL,
                    p->arg_reg, p->arity);
     if (oh) {
 	oh = (struct erl_off_heap_header *) ((Eterm *)(void *) oh + offs);
@@ -1619,7 +1643,7 @@ static ERTS_INLINE void copy_erlang_stack(Process *p,
                 Eterm *frame_ptr = (Eterm*)cp_val(val);
 
                 if (old_p < frame_ptr && frame_ptr < prev_stack_end) {
-                    val = offset_ptr(val, stack_offset);
+                    val = GC_OFFSET_PTR(val, stack_offset, new_stack_top);
                 }
             }
 
@@ -2537,17 +2561,17 @@ erts_copy_one_frag(Eterm** hpp, ErlOffHeap* off_heap,
 	    *hp++ = val;
 	    break;
 	case TAG_PRIMARY_LIST:
-            if (erts_is_literal(val,list_val(val))) {
+                        if (erts_is_literal(val,list_val(val))) {
                 *hp++ = val;
             } else {
-                *hp++ = offset_ptr(val, offs);
+                *hp++ = GC_OFFSET_PTR(val, offs, *hpp);
             }
             break;
-	case TAG_PRIMARY_BOXED:
+        case TAG_PRIMARY_BOXED:
             if (erts_is_literal(val,boxed_val(val))) {
                 *hp++ = val;
             } else {
-                *hp++ = offset_ptr(val, offs);
+                *hp++ = GC_OFFSET_PTR(val, offs, *hpp);
             }
 	    break;
 	case TAG_PRIMARY_HEADER:
@@ -2605,9 +2629,9 @@ erts_copy_one_frag(Eterm** hpp, ErlOffHeap* off_heap,
     ASSERT(bp->used_size == hp - *hpp);
     *hpp = hp;
 
-    for (i = 0; i < nrefs; i++) {
-	if (is_not_immed(refs[i]) && !erts_is_literal(refs[i],ptr_val(refs[i])))
-	    refs[i] = offset_ptr(refs[i], offs);
+        for (i = 0; i < nrefs; i++) {
+        if (is_not_immed(refs[i]) && !erts_is_literal(refs[i],ptr_val(refs[i])))
+            refs[i] = GC_OFFSET_PTR(refs[i], offs, hp);
     }
     bp->off_heap.first = NULL;
 }
@@ -2858,15 +2882,15 @@ static void resize_new_heap(Process *p, Uint new_sz, Eterm* objv, int nobj)
     stack_area = (char *) prev_stack;
     stack_area_sz = stack_used * sizeof(Eterm);
 
-    if (new_heap == prev_heap) {
+        if (new_heap == prev_heap) {
         offset_stack(new_stack, stack_used,
-                     heap_offs, heap_area, heap_area_sz,
-                     stack_offs, stack_area, stack_area_sz);
+                     heap_offs, heap_area, heap_area_sz, new_heap,
+                     stack_offs, stack_area, stack_area_sz, new_stack);
     } else {
-        offset_heap(new_heap, heap_used, heap_offs, heap_area, heap_area_sz);
+        offset_heap(new_heap, heap_used, heap_offs, heap_area, heap_area_sz, new_heap);
         offset_rootset(p,
-                       heap_offs, heap_area, heap_area_sz,
-                       stack_offs, stack_area, stack_area_sz,
+                       heap_offs, heap_area, heap_area_sz, new_heap,
+                       stack_offs, stack_area, stack_area_sz, new_stack,
                        objv, nobj);
     }
 }
@@ -3293,17 +3317,17 @@ sweep_off_heap(Process *p, int fullsweep)
  * Offset pointers into the heap (not stack).
  */
 
-static void 
-offset_heap(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_size)
+static void
+offset_heap(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_size, const void *dst_cap)
 {
     while (sz--) {
 	Eterm val = *hp;
 	switch (primary_tag(val)) {
-	  case TAG_PRIMARY_LIST:
-	  case TAG_PRIMARY_BOXED:
-	      if (ErtsInArea(ptr_val(val), area, area_size)) {
-		  *hp = offset_ptr(val, offs);
-	      }
+	            case TAG_PRIMARY_LIST:
+          case TAG_PRIMARY_BOXED:
+              if (ErtsInArea(ptr_val(val), area, area_size)) {
+                  *hp = GC_OFFSET_PTR(val, offs, dst_cap);
+              }
 	      hp++;
 	      break;
 	  case TAG_PRIMARY_HEADER: {
@@ -3335,18 +3359,18 @@ offset_heap(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_size)
                                              __FILE__, __LINE__);
                       }
 
-		      if (ErtsInArea(oh->next, area, area_size)) {
-			  Eterm** uptr = (Eterm **) (void *) &oh->next;
-			  *uptr += offs; /* Patch the mso chain */
-		      }
+		                            if (ErtsInArea(oh->next, area, area_size)) {
+                          Eterm** uptr = (Eterm **) (void *) &oh->next;
+                          GC_OFFSET_RAW_PTR(uptr, offs, dst_cap); /* Patch the mso chain */
+                      }
 		  }
 		  break;
             case SUB_BITS_SUBTAG:
                 {
                     ErlSubBits *sb = (ErlSubBits*) hp;
 
-                    if (ErtsInArea(ptr_val(sb->orig), area, area_size)) {
-                        sb->orig = offset_ptr(sb->orig, offs);
+                                        if (ErtsInArea(ptr_val(sb->orig), area, area_size)) {
+                        sb->orig = GC_OFFSET_PTR(sb->orig, offs, dst_cap);
                         erl_sub_bits_update_moved(sb, sb->orig);
                     }
                 }
@@ -3366,12 +3390,12 @@ offset_heap(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_size)
 /* Offset on-stack pointers to stack and heap. */
 static void
 offset_stack(Eterm *stack, Uint sz,
-             Sint heap_offset, const char *heap_area, Uint heap_area_sz,
-             Sint stack_offset, const char *stack_area, Uint stack_area_sz) {
+             Sint heap_offset, const char *heap_area, Uint heap_area_sz, const void *heap_dst_cap,
+             Sint stack_offset, const char *stack_area, Uint stack_area_sz, const void *stack_dst_cap) {
     if (erts_frame_layout == ERTS_FRAME_LAYOUT_RA || stack_offset == 0) {
         /* No need to update self-references, just update pointers to the
          * heap. */
-        offset_heap_ptr(stack, sz, heap_offset, heap_area, heap_area_sz);
+        offset_heap_ptr(stack, sz, heap_offset, heap_area, heap_area_sz, heap_dst_cap);
     } else {
         Sint i = 0;
 
@@ -3383,7 +3407,7 @@ offset_stack(Eterm *stack, Uint sz,
             switch (primary_tag(val)) {
             case TAG_PRIMARY_HEADER:
                 if (ErtsInArea(val, stack_area, stack_area_sz)) {
-                    stack[i] = offset_ptr(val, stack_offset);
+                    stack[i] = GC_OFFSET_PTR(val, stack_offset, stack_dst_cap);
                 }
 
                 i++;
@@ -3391,7 +3415,7 @@ offset_stack(Eterm *stack, Uint sz,
             case TAG_PRIMARY_LIST:
             case TAG_PRIMARY_BOXED:
                 if (ErtsInArea(ptr_val(val), heap_area, heap_area_sz)) {
-                    stack[i] = offset_ptr(val, heap_offset);
+                    stack[i] = GC_OFFSET_PTR(val, heap_offset, heap_dst_cap);
                 }
 
                 i++;
@@ -3406,16 +3430,16 @@ offset_stack(Eterm *stack, Uint sz,
 
 /* Offset pointers to heap from a root set. */
 static void
-offset_heap_ptr(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_sz)
+offset_heap_ptr(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_sz, const void *dst_cap)
 {
     while (sz--) {
-	Eterm val = *hp;
-	switch (primary_tag(val)) {
-	case TAG_PRIMARY_LIST:
-	case TAG_PRIMARY_BOXED:
-	    if (ErtsInArea(ptr_val(val), area, area_sz)) {
-		*hp = offset_ptr(val, offs);
-	    }
+        Eterm val = *hp;
+        switch (primary_tag(val)) {
+        case TAG_PRIMARY_LIST:
+        case TAG_PRIMARY_BOXED:
+            if (ErtsInArea(ptr_val(val), area, area_sz)) {
+                *hp = GC_OFFSET_PTR(val, offs, dst_cap);
+            }
 	    hp++;
 	    break;
 	default:
@@ -3426,32 +3450,32 @@ offset_heap_ptr(Eterm* hp, Uint sz, Sint offs, const char* area, Uint area_sz)
 }
 
 static void
-offset_off_heap(Process* p, Sint offs, const char *area, Uint area_size)
+offset_off_heap(Process* p, Sint offs, const char *area, Uint area_size, const void *dst_cap)
 {
     if (MSO(p).first && ErtsInArea((Eterm *)MSO(p).first, area, area_size)) {
         Eterm** uptr = (Eterm**) (void *) &MSO(p).first;
-        *uptr += offs;
+        GC_OFFSET_RAW_PTR(uptr, offs, dst_cap);
     }
     if (p->wrt_bins && ErtsInArea(p->wrt_bins, area, area_size)) {
         Eterm** uptr = (Eterm**) (void *) &p->wrt_bins;
-        *uptr += offs;
+        GC_OFFSET_RAW_PTR(uptr, offs, dst_cap);
     }
 }
 
 #ifndef USE_VM_PROBES
-#define ERTS_OFFSET_DT_UTAG(MP, A, ASZ, O)
+#define ERTS_OFFSET_DT_UTAG(MP, A, ASZ, O, DST)
 #else
-#define ERTS_OFFSET_DT_UTAG(MP, A, ASZ, O)                                      \
+#define ERTS_OFFSET_DT_UTAG(MP, A, ASZ, O, DST)                                 \
     do {                                                                        \
         Eterm utag__ = ERL_MESSAGE_DT_UTAG((MP));                               \
         if (is_boxed(utag__) && ErtsInArea(ptr_val(utag__), (A), (ASZ))) {      \
-            ERL_MESSAGE_DT_UTAG((MP)) = offset_ptr(utag__, (O));                \
+            ERL_MESSAGE_DT_UTAG((MP)) = GC_OFFSET_PTR(utag__, (O), (DST));      \
         }                                                                       \
     } while (0)
 #endif
 
 static ERTS_INLINE void
-offset_message(ErtsMessage *mp, Sint offs, const char *area, Uint area_size)
+offset_message(ErtsMessage *mp, Sint offs, const char *area, Uint area_size, const void *dst_cap)
 {
     Eterm mesg = ERL_MESSAGE_TERM(mp);
     if (ERTS_SIG_IS_MSG_TAG(mesg) || ERTS_SIG_IS_HEAP_ALTACT_MSG_TAG(mesg)) {
@@ -3460,13 +3484,13 @@ offset_message(ErtsMessage *mp, Sint offs, const char *area, Uint area_size)
             case TAG_PRIMARY_LIST:
             case TAG_PRIMARY_BOXED:
                 if (ErtsInArea(ptr_val(mesg), area, area_size)) {
-                    ERL_MESSAGE_TERM(mp) = offset_ptr(mesg, offs);
+                    ERL_MESSAGE_TERM(mp) = GC_OFFSET_PTR(mesg, offs, dst_cap);
                 }
                 break;
             }
             mesg = ERL_MESSAGE_TOKEN(mp);
             if (is_boxed(mesg) && ErtsInArea(ptr_val(mesg), area, area_size)) {
-                ERL_MESSAGE_TOKEN(mp) = offset_ptr(mesg, offs);
+                ERL_MESSAGE_TOKEN(mp) = GC_OFFSET_PTR(mesg, offs, dst_cap);
             }
             ASSERT((is_nil(ERL_MESSAGE_TOKEN(mp)) ||
                     is_tuple(ERL_MESSAGE_TOKEN(mp)) ||
@@ -3479,10 +3503,10 @@ offset_message(ErtsMessage *mp, Sint offs, const char *area, Uint area_size)
          */
         mesg = ERL_MESSAGE_FROM(mp);
         if (is_boxed(mesg) && ErtsInArea(ptr_val(mesg), area, area_size)) {
-            ERL_MESSAGE_FROM(mp) = offset_ptr(mesg, offs);
+            ERL_MESSAGE_FROM(mp) = GC_OFFSET_PTR(mesg, offs, dst_cap);
         }
 
-        ERTS_OFFSET_DT_UTAG(mp, area, area_size, offs);
+        ERTS_OFFSET_DT_UTAG(mp, area, area_size, offs, dst_cap);
     }
 }
 
@@ -3490,16 +3514,16 @@ offset_message(ErtsMessage *mp, Sint offs, const char *area, Uint area_size)
  * Offset pointers in message queue.
  */
 static void
-offset_mqueue(Process *p, Sint offs, const char *area, Uint area_size)
+offset_mqueue(Process *p, Sint offs, const char *area, Uint area_size, const void *dst_cap)
 {
     if ((p->sig_qs.flags & (FS_OFF_HEAP_MSGQ|FS_OFF_HEAP_MSGQ_CHNG)) != FS_OFF_HEAP_MSGQ)
-        ERTS_FOREACH_SIG_PRIVQS(p, mp, offset_message(mp, offs, area, area_size));
+        ERTS_FOREACH_SIG_PRIVQS(p, mp, offset_message(mp, offs, area, area_size, dst_cap));
 }
 
 static void
 offset_rootset(Process *p,
-               Sint heap_offs, const char *heap_area, Uint heap_area_sz,
-               Sint stack_offs, const char *stack_area, Uint stack_area_sz,
+               Sint heap_offs, const char *heap_area, Uint heap_area_sz, const void *heap_dst_cap,
+               Sint stack_offs, const char *stack_area, Uint stack_area_sz, const void *stack_dst_cap,
                Eterm* objv, int nobj)
 {
     Eterm *v;
@@ -3507,32 +3531,32 @@ offset_rootset(Process *p,
     if (p->dictionary)  {
         offset_heap(ERTS_PD_START(p->dictionary),
                     ERTS_PD_SIZE(p->dictionary),
-                    heap_offs, heap_area, heap_area_sz);
+                    heap_offs, heap_area, heap_area_sz, heap_dst_cap);
     }
 
-    offset_heap_ptr(&p->fvalue, 1, heap_offs, heap_area, heap_area_sz);
-    offset_heap_ptr(&p->ftrace, 1, heap_offs, heap_area, heap_area_sz);
-    offset_heap_ptr(&p->seq_trace_token, 1, heap_offs, heap_area, heap_area_sz);
+    offset_heap_ptr(&p->fvalue, 1, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
+    offset_heap_ptr(&p->ftrace, 1, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
+    offset_heap_ptr(&p->seq_trace_token, 1, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
 #ifdef USE_VM_PROBES
-    offset_heap_ptr(&p->dt_utag, 1, heap_offs, heap_area, heap_area_sz);
+    offset_heap_ptr(&p->dt_utag, 1, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
 #endif
-    offset_heap_ptr(&p->group_leader, 1, heap_offs, heap_area, heap_area_sz);
-    offset_heap_ptr(&p->parent, 1, heap_offs, heap_area, heap_area_sz);
+    offset_heap_ptr(&p->group_leader, 1, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
+    offset_heap_ptr(&p->parent, 1, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
     if (p->sig_qs.recv_mrk_blk) {
         offset_heap_ptr(&p->sig_qs.recv_mrk_blk->ref[0],
                         ERTS_RECV_MARKER_BLOCK_SIZE, heap_offs,
-                        heap_area, heap_area_sz);
+                        heap_area, heap_area_sz, heap_dst_cap);
     }
-    offset_mqueue(p, heap_offs, heap_area, heap_area_sz);
+    offset_mqueue(p, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
     offset_stack(p->stop, (STACK_START(p) - p->stop),
-                 heap_offs, heap_area, heap_area_sz,
-                 stack_offs, stack_area, stack_area_sz);
+                 heap_offs, heap_area, heap_area_sz, heap_dst_cap,
+                 stack_offs, stack_area, stack_area_sz, stack_dst_cap);
     if (nobj > 0) {
-        offset_heap_ptr(objv, nobj, heap_offs, heap_area, heap_area_sz);
+        offset_heap_ptr(objv, nobj, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
     }
-    offset_off_heap(p, heap_offs, heap_area, heap_area_sz);
+    offset_off_heap(p, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
     if (erts_setup_nfunc_rootset(p, &v, &sz)) {
-        offset_heap_ptr(v, sz, heap_offs, heap_area, heap_area_sz);
+        offset_heap_ptr(v, sz, heap_offs, heap_area, heap_area_sz, heap_dst_cap);
     }
 }
 

@@ -701,8 +701,8 @@ efile_gm_get_1([P|Ps], File0, Mod, {Parent,Ref}=PR, Process) ->
 	    _ = check_file_result(get_modules, File, Error),
 	    efile_gm_get_1(Ps, File0, Mod, PR, Process)
     catch
-	_:Reason ->
-	    Res = {error,{crash,Reason}},
+	Class:Reason:Stack ->
+        Res = {error,{crash,Class,Reason,Stack}},
 	    Parent ! {Ref,Mod,Res}
     end;
 efile_gm_get_1([], _, Mod, {Parent,Ref}, _Process) ->
@@ -738,8 +738,8 @@ gm_process(Mod, File, Bin, Process) ->
 	{error,_}=Res -> Res;
 	Other -> {error,{bad_return,Other}}
     catch
-	_:Error ->
-	    {error,{crash,Error}}
+	Class:Error:Stack ->
+        {error,{crash,Class,Error,Stack}}
     end.
 
 

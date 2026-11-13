@@ -222,7 +222,10 @@ filesync(Name) ->
       Reason :: term().
 
 adding_handler(Config) ->
-    logger_h_common:adding_handler(Config).
+    erlang:display({cheri_std_handler_begin, self()}),
+    CheriResult = logger_h_common:adding_handler(Config),
+    erlang:display({cheri_std_handler_end, self()}),
+    CheriResult.
 
 %%%-----------------------------------------------------------------
 %%% Updating handler config

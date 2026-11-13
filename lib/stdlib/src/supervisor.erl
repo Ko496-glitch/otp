@@ -1023,7 +1023,11 @@ start_children(Children, SupName) ->
 
 do_start_child(SupName, Child, Report) ->
     #child{mfargs = {M, F, Args}} = Child,
-    case do_start_child_i(M, F, Args) of
+    erlang:display({cheri_child_start, self(), SupName, M, F}),
+    CheriStartResult = do_start_child_i(M, F, Args),
+    erlang:display({cheri_child_return, self(), SupName, M, F,
+                    CheriStartResult}),
+    case CheriStartResult of
 	{ok, Pid} when is_pid(Pid) ->
 	    NChild = Child#child{pid = Pid},
 	    report_progress(NChild, SupName, Report),

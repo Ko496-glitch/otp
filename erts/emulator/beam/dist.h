@@ -263,12 +263,12 @@ typedef struct TTBSizeContext_ {
     Uint extra_size;
     Uint result;
     Eterm obj;
-    ErtsWStack wstack;
+    ErtsEStack wstack;
 } TTBSizeContext;
 
 #define ERTS_INIT_TTBSizeContext(Ctx, Flags)                    \
     do {                                                        \
-        (Ctx)->wstack.wstart = NULL;                            \
+        (Ctx)->wstack.start = NULL;                            \
         (Ctx)->dflags = (Flags);                                 \
         (Ctx)->level = 0;                                       \
         (Ctx)->vlen = -1;                                       \
@@ -284,7 +284,7 @@ typedef struct TTBEncodeContext_ {
     int level;
     byte* ep;
     Eterm obj;
-    ErtsWStack wstack;
+    ErtsEStack wstack;
     Eterm* map_array;
     Eterm* next_map_element;
     void* ycf_yield_state;
@@ -316,7 +316,7 @@ typedef struct TTBEncodeContext_ {
 
 #define ERTS_INIT_TTBEncodeContext(Ctx, Flags)                  \
     do {                                                        \
-        (Ctx)->wstack.wstart = NULL;                            \
+        (Ctx)->wstack.start = NULL;                            \
         (Ctx)->dflags = (Flags);                                \
         (Ctx)->level = 0;                                       \
         (Ctx)->map_array = 0;                                   \

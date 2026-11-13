@@ -69,8 +69,8 @@ select_val_bins.select(Fail, NumElements) {
         } else if (select_val > mid->val) {
             low = mid + 1;
         } else {
-            Sint32* jump_tab = (Sint32 *) ($NEXT_INSTRUCTION + $NumElements);
-            Sint32 offset = jump_tab[mid - (struct Singleton *)($NEXT_INSTRUCTION)];
+            const BeamInstr* jump_tab = ($NEXT_INSTRUCTION + $NumElements);
+            Sint32 offset = BEAM_JUMP_TAB_ELEM(jump_tab, mid - (struct Singleton *)($NEXT_INSTRUCTION));
             $JUMP(offset);
         }
     }
@@ -97,12 +97,14 @@ select_val2.get_arity() {
 }
 
 select_val2.execute(Fail, T1, T2) {
-    Sint32* jump_tab = (Sint32 *) ($NEXT_INSTRUCTION);
+    const BeamInstr* jump_tab = ($NEXT_INSTRUCTION);
 
     if (select_val2 == $T1) {
-        $JUMP(jump_tab[0]);
+        Sint32 offset = BEAM_JUMP_TAB_ELEM(jump_tab, 0);
+        $JUMP(offset);
     } else if (select_val2 == $T2) {
-        $JUMP(jump_tab[1]);
+        Sint32 offset = BEAM_JUMP_TAB_ELEM(jump_tab, 1);
+        $JUMP(offset);
     } else {
         $FAIL($Fail);
     }
@@ -144,8 +146,8 @@ select_val_lin.execute(Fail, N) {
     }
 
     if (vs[ix] == select_val) {
-        Sint32* jump_tab = (Sint32 *) ($NEXT_INSTRUCTION + $N);
-        Eterm offset = jump_tab[ix];
+        const BeamInstr* jump_tab = ($NEXT_INSTRUCTION + $N);
+        Sint32 offset = BEAM_JUMP_TAB_ELEM(jump_tab, ix);
         $JUMP(offset);
     } else {
         $JUMP($Fail);
@@ -156,8 +158,9 @@ JUMP_ON_VAL(Fail, Index, N, Base) {
     if (is_small($Index)) {
         $Index = (Uint) (signed_val($Index) - $Base);
         if ($Index < $N) {
-            Sint32* jump_tab = (Sint32 *) ($NEXT_INSTRUCTION);
-            $JUMP(jump_tab[$Index]);
+            const BeamInstr* jump_tab = ($NEXT_INSTRUCTION);
+            Sint32 offset = BEAM_JUMP_TAB_ELEM(jump_tab, $Index);
+            $JUMP(offset);
         }
     }
     $FAIL($Fail);

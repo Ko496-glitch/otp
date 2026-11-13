@@ -2455,7 +2455,7 @@ erts_proc_set_error_handler(Process *p, Eterm handler)
     void *old_val;
     void *new_val;
     ASSERT(is_atom(handler));
-    new_val = (handler == am_error_handler) ? NULL : (void *) (UWord) handler;
+    new_val = (handler == am_error_handler) ? NULL : (void *) (uintptr_t) handler;
     old_val = erts_psd_set(p, ERTS_PSD_ERROR_HANDLER, new_val);
     if (!old_val)
 	return am_error_handler;

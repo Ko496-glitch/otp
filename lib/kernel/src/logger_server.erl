@@ -203,7 +203,13 @@ handle_call({remove_handler,HandlerId}, From, #state{tid=Tid}=State) ->
             call_h_async(
               fun() ->
                       %% inform the handler
-                      call_h(Module,removing_handler,[HConfig],ok)
+                      erlang:display({cheri_remove_begin, self(),
+                                      HandlerId, Module}),
+                      CheriRemoveResult =
+                          call_h(Module,removing_handler,[HConfig],ok),
+                      erlang:display({cheri_remove_end, self(),
+                                      HandlerId, Module}),
+                      CheriRemoveResult
               end,
               fun(_Res) ->
                       {ok,Config} = logger_config:get(Tid,primary),
@@ -384,7 +390,10 @@ call(Request) when is_tuple(Request) ->
               Action == change_config ->
             {error,{attempting_syncronous_call_to_self,Request}};
         _ ->
-            gen_server:call(?SERVER,Request,?DEFAULT_LOGGER_CALL_TIMEOUT)
+            erlang:display({cheri_logger_call_begin, self(), Action}),
+            CheriReply = gen_server:call(?SERVER,Request,?DEFAULT_LOGGER_CALL_TIMEOUT),
+            erlang:display({cheri_logger_call_end, self(), Action}),
+            CheriReply
     end.
 
 

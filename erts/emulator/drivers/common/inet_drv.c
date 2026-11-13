@@ -10990,6 +10990,23 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 {
     int save_errno = 0;
 
+#ifdef __CHERI_PURE_CAPABILITY__
+    fprintf(stderr,
+            "[CHERI inet_ctl] cmd=%d tag=%d sealed=%d "
+            "addr=0x%llx base=0x%llx length=0x%llx perms=0x%llx "
+            "sizeof_desc=%zu\n",
+            cmd,
+            (int)__builtin_cheri_tag_get(desc),
+            (int)__builtin_cheri_sealed_get(desc),
+            (unsigned long long)__builtin_cheri_address_get(desc),
+            (unsigned long long)__builtin_cheri_base_get(desc),
+            (unsigned long long)__builtin_cheri_length_get(desc),
+            (unsigned long long)__builtin_cheri_perms_get(desc),
+            sizeof(*desc));
+    fflush(stderr);
+#endif
+
+
     switch (cmd) {
 
     case INET_REQ_GETSTAT: {

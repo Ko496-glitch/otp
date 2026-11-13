@@ -4561,28 +4561,27 @@ void erts_print_nif_taints(fmtfn_t to, void* to_arg)
 static Eterm load_nif_error(Process* p, const char* atom, const char* format, ...)
 {
     erts_dsprintf_buf_t* dsbufp = erts_create_tmp_dsbuf(0);
-    Eterm ret;
+    Eterm ret, detail, txt = NIL;
     Eterm* hp;
-    Eterm** hpp = NULL;
-    Uint sz = 0;
-    Uint* szp = &sz;
-    va_list arglist;   
+    Eterm reason = mkatom(atom);
+    size_t i;
+    va_list arglist;
 
     va_start(arglist, format);
     erts_vdsprintf(dsbufp, format, arglist);
     va_end(arglist);
-    
-    for (;;) {
-	Eterm txt = erts_bld_string_n(hpp, &sz, dsbufp->str, dsbufp->str_len);
-	ret = erts_bld_tuple(hpp, szp, 2, am_error,
-			     erts_bld_tuple(hpp, szp, 2, mkatom(atom), txt));
-	if (hpp != NULL) {
-	    break;
-	}
-	hp = HAlloc(p,sz);
-	hpp = &hp;
-	szp = NULL;
+
+    hp = HAlloc(p, 2 * dsbufp->str_len + 6);
+
+    for (i = dsbufp->str_len; i > 0; --i) {
+        txt = CONS(hp, make_small((unsigned char)dsbufp->str[i-1]), txt);
+        hp += 2;
     }
+
+    detail = TUPLE2(hp, reason, txt);
+    hp += 3;
+    ret = TUPLE2(hp, am_error, detail);
+
     erts_destroy_tmp_dsbuf(dsbufp);
     return ret;
 }

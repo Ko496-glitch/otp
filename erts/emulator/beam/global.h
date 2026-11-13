@@ -1345,7 +1345,7 @@ void *erts_ptr_id(void *ptr) ERTS_NOINLINE;
 int erts_check_if_stack_grows_downwards(char *ptr) ERTS_NOINLINE;
 
 Eterm store_external_or_ref_in_proc_(Process *, Eterm);
-Eterm store_external_or_ref_(Uint **, ErlOffHeap*, Eterm);
+Eterm store_external_or_ref_(Eterm **, ErlOffHeap*, Eterm);
 
 typedef Eterm  (*erts_ycf_continue_fun_t)(long* ycf_number_of_reduction_param,
                                           void** ycf_trap_state,

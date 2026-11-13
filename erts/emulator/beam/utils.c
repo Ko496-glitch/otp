@@ -1403,24 +1403,27 @@ tailrecur_ne:
 		    goto pop_next;
 	    }
 	    case POS_BIG_SUBTAG:
-	    case NEG_BIG_SUBTAG:
-		{
-		    int i;
+            case NEG_BIG_SUBTAG:
+                {
+                    Uint i;
+                    const ErtsDigit *ad, *bd;
 
-		    if (!is_big(b))
-			goto not_equal;
-		    aa = big_val(a);
-		    bb = big_val(b);
-		    if (*aa != *bb)
-			goto not_equal;
-		    i = BIG_ARITY(aa);
-		    while(i--) {
-			if (*++aa != *++bb)
-			    goto not_equal;
-		    }
-		    goto pop_next;
-		}
-	    case FLOAT_SUBTAG:
+                    if (!is_big(b))
+                        goto not_equal;
+                    aa = big_val(a);
+                    bb = big_val(b);
+                    if (*aa != *bb)
+                        goto not_equal;
+
+                    ad = BIG_V(aa);
+                    bd = BIG_V(bb);
+                    for (i = 0; i < BIG_ARITY(aa); i++) {
+                        if (ad[i] != bd[i])
+                            goto not_equal;
+                    }
+                    goto pop_next;
+                }
+            case FLOAT_SUBTAG:
 		{
 		    FloatDef af;
 		    FloatDef bf;
@@ -2751,7 +2754,7 @@ not_equal:
 
 
 Eterm
-store_external_or_ref_(Uint **hpp, ErlOffHeap* oh, Eterm ns)
+store_external_or_ref_(Eterm **hpp, ErlOffHeap* oh, Eterm ns)
 {
     struct erl_off_heap_header *ohhp;
     Uint i;
@@ -2794,7 +2797,7 @@ Eterm
 store_external_or_ref_in_proc_(Process *proc, Eterm ns)
 {
     Uint sz;
-    Uint *hp;
+    Eterm *hp;
 
     ASSERT(is_external(ns) || is_internal_ref(ns));
 
@@ -3476,17 +3479,30 @@ static void erts_qsort_swap(size_t item_size,
     ASSERT(item_size % sizeof(UWord) == 0);
 
     if (iptr != jptr) {
-        /* Do it word by word */
-        UWord* iwp = (UWord*) iptr;
-        UWord* jwp = (UWord*) jptr;
-	size_t cnt;
-        for (cnt = item_size / sizeof(UWord); cnt; cnt--) {
+        byte *ibp = (byte *)iptr;
+        byte *jbp = (byte *)jptr;
+        size_t rem = item_size;
+#if defined(__CHERI_PURE_CAPABILITY__)
+        if (((__builtin_cheri_address_get(ibp) | __builtin_cheri_address_get(jbp)) & (sizeof(Eterm) - 1)) == 0) {
+            while (rem >= sizeof(Eterm)) {
+                Eterm tmp;
+                sys_memcpy(&tmp, jbp, sizeof(Eterm));
+                sys_memcpy(jbp, ibp, sizeof(Eterm));
+                sys_memcpy(ibp, &tmp, sizeof(Eterm));
+                jbp += sizeof(Eterm);
+                ibp += sizeof(Eterm);
+                rem -= sizeof(Eterm);
+            }
+        }
+#endif
+        while (rem >= sizeof(UWord)) {
             UWord tmp;
-	    sys_memcpy(&tmp, jwp, sizeof(UWord));
-	    sys_memcpy(jwp, iwp, sizeof(UWord));
-	    sys_memcpy(iwp, &tmp, sizeof(UWord));
-	    jwp++;
-            iwp++;
+            sys_memcpy(&tmp, jbp, sizeof(UWord));
+            sys_memcpy(jbp, ibp, sizeof(UWord));
+            sys_memcpy(ibp, &tmp, sizeof(UWord));
+            jbp += sizeof(UWord);
+            ibp += sizeof(UWord);
+            rem -= sizeof(UWord);
         }
     }
 }

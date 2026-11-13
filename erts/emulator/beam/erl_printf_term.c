@@ -350,15 +350,12 @@ static char *format_binary(Uint16 x, char *b) {
 
 static int
 print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
-    DECLARE_WSTACK(s);
+    DECLARE_ESTACK(s);
     int res;
     int i;
     Eterm val;
     Uint32 *ref_num;
-    union {
-	UWord word;
-	Eterm* ptr;
-    }popped;
+    Eterm popped_word;
     Eterm* nobj;
     Eterm wobj;
 
@@ -367,8 +364,8 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
     goto L_jump_start;
 
  L_outer_loop:
-    while (!WSTACK_ISEMPTY(s)) {
-	switch (val = WSTACK_POP(s)) {
+    while (!ESTACK_ISEMPTY(s)) {
+	switch (val = ESTACK_POP(s)) {
 	case PRT_COMMA:
 	    PRINT_CHAR(res, fn, arg, ',');
 	    goto L_outer_loop;
@@ -388,14 +385,14 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 	    PRINT_STRING(res, fn, arg, "=");
 	    goto L_outer_loop;
 	default:
-	    popped.word = WSTACK_POP(s);
+	    popped_word = ESTACK_POP(s);
 
 	    switch (val) {
 	    case PRT_TERM:
-		obj = (Eterm) popped.word;
+		obj = (Eterm) popped_word;
 		break;
 	    case PRT_ONE_CONS:
-		obj = (Eterm) popped.word;
+		obj = (Eterm) popped_word;
 	    L_print_one_cons:
 		{
 		    Eterm* cons = list_val(obj);
@@ -405,19 +402,19 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 		    tl = CDR(cons);
 		    if (is_not_nil(tl)) {
 			if (is_list(tl)) {
-			    WSTACK_PUSH3(s, tl, PRT_ONE_CONS, PRT_COMMA);
+			    ESTACK_PUSH3(s, tl, PRT_ONE_CONS, PRT_COMMA);
 			} else {
-			    WSTACK_PUSH3(s, tl, PRT_TERM, PRT_BAR);
+			    ESTACK_PUSH3(s, tl, PRT_TERM, PRT_BAR);
 			}
 		    }
 		}
 		break;
 	    case PRT_LAST_ARRAY_ELEMENT:
-		obj = *popped.ptr;
+		obj = *((Eterm *) popped_word);
 		break;
 	    default:		/* PRT_LAST_ARRAY_ELEMENT+1 and upwards */
-		obj = *popped.ptr;
-	        WSTACK_PUSH3(s, (UWord) (popped.ptr + 1), val-1, PRT_COMMA);
+		obj = *((Eterm *) popped_word);
+	        ESTACK_PUSH3(s, (Eterm) (((Eterm *) popped_word) + 1), val-1, PRT_COMMA);
 		break;
 	    }
 	    break;
@@ -551,7 +548,7 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 		PRINT_CHAR(res, fn, arg, '"');
 	    } else {
 		PRINT_CHAR(res, fn, arg, '[');
-		WSTACK_PUSH(s,PRT_CLOSE_LIST);
+		ESTACK_PUSH(s,PRT_CLOSE_LIST);
 		goto L_print_one_cons;
 	    }
 	    break;
@@ -572,13 +569,12 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
                 PRINT_CHAR(res, fn, arg, ':');
                 PRINT_ATOM(res, fn, arg, defp->name, dcount);
                 PRINT_CHAR(res, fn, arg, '{');
-                WSTACK_PUSH(s, PRT_CLOSE_TUPLE);
+                ESTACK_PUSH(s, PRT_CLOSE_TUPLE);
                 if (n > 0) {
                     n--;
-                    WSTACK_PUSH5(s, vs[n], PRT_TERM, PRT_EQUALS, ks[n], PRT_TERM);
+                    do { ESTACK_PUSH(s, vs[n]); ESTACK_PUSH(s, PRT_TERM); ESTACK_PUSH(s, PRT_EQUALS); ESTACK_PUSH(s, ks[n]); ESTACK_PUSH(s, PRT_TERM); } while (0);
                     while (n--) {
-                        WSTACK_PUSH6(s, PRT_COMMA, vs[n], PRT_TERM, PRT_EQUALS,
-                                ks[n], PRT_TERM);
+                        do { ESTACK_PUSH(s, PRT_COMMA); ESTACK_PUSH(s, vs[n]); ESTACK_PUSH(s, PRT_TERM); ESTACK_PUSH(s, PRT_EQUALS); ESTACK_PUSH(s, ks[n]); ESTACK_PUSH(s, PRT_TERM); } while (0);
                     }
                 }
             }
@@ -587,10 +583,10 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
             nobj = tuple_val(wobj);     /* pointer to arity */
             i = arityval(*nobj);        /* arity */
             PRINT_CHAR(res, fn, arg, '{');
-            WSTACK_PUSH(s,PRT_CLOSE_TUPLE);
+            ESTACK_PUSH(s,PRT_CLOSE_TUPLE);
             ++nobj;
             if (i > 0) {
-                WSTACK_PUSH2(s, (UWord) nobj, PRT_LAST_ARRAY_ELEMENT+i-1);
+                ESTACK_PUSH2(s, (Eterm) nobj, PRT_LAST_ARRAY_ELEMENT+i-1);
             }
             break;
 	case FLOAT_DEF: {
@@ -736,13 +732,12 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 
                 PRINT_CHAR(res, fn, arg, '#');
                 PRINT_CHAR(res, fn, arg, '{');
-                WSTACK_PUSH(s, PRT_CLOSE_TUPLE);
+                ESTACK_PUSH(s, PRT_CLOSE_TUPLE);
                 if (n > 0) {
                     n--;
-                    WSTACK_PUSH5(s, vs[n], PRT_TERM, PRT_ASSOC, ks[n], PRT_TERM);
+                    do { ESTACK_PUSH(s, vs[n]); ESTACK_PUSH(s, PRT_TERM); ESTACK_PUSH(s, PRT_ASSOC); ESTACK_PUSH(s, ks[n]); ESTACK_PUSH(s, PRT_TERM); } while (0);
                     while (n--) {
-                        WSTACK_PUSH6(s, PRT_COMMA, vs[n], PRT_TERM, PRT_ASSOC,
-                                ks[n], PRT_TERM);
+                        do { ESTACK_PUSH(s, PRT_COMMA); ESTACK_PUSH(s, vs[n]); ESTACK_PUSH(s, PRT_TERM); ESTACK_PUSH(s, PRT_ASSOC); ESTACK_PUSH(s, ks[n]); ESTACK_PUSH(s, PRT_TERM); } while (0);
                     }
                 }
             } else {
@@ -755,7 +750,7 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
                 case MAP_HEADER_TAG_HAMT_HEAD_ARRAY:
                 case MAP_HEADER_TAG_HAMT_HEAD_BITMAP:
                     PRINT_STRING(res, fn, arg, "#{");
-                    WSTACK_PUSH(s, PRT_CLOSE_TUPLE);
+                    ESTACK_PUSH(s, PRT_CLOSE_TUPLE);
                     head++;
                     ERTS_FALLTHROUGH();
                 case MAP_HEADER_TAG_HAMT_NODE_BITMAP:
@@ -766,7 +761,7 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
                             assoc = list_val(head[n]);
                             key = CAR(assoc);
                             val = CDR(assoc);
-                            WSTACK_PUSH5(s, val, PRT_TERM, PRT_ASSOC, key, PRT_TERM);
+                            do { ESTACK_PUSH(s, val); ESTACK_PUSH(s, PRT_TERM); ESTACK_PUSH(s, PRT_ASSOC); ESTACK_PUSH(s, key); ESTACK_PUSH(s, PRT_TERM); } while (0);
                         }
                         else if (is_tuple(head[n])) { /* collision node */
                             Eterm *tpl = tuple_val(head[n]);
@@ -776,17 +771,17 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
                                 assoc = list_val(tpl[arity]);
                                 key = CAR(assoc);
                                 val = CDR(assoc);
-                                WSTACK_PUSH5(s, val, PRT_TERM, PRT_ASSOC, key, PRT_TERM);
+                                do { ESTACK_PUSH(s, val); ESTACK_PUSH(s, PRT_TERM); ESTACK_PUSH(s, PRT_ASSOC); ESTACK_PUSH(s, key); ESTACK_PUSH(s, PRT_TERM); } while (0);
                                 if (--arity == 0)
                                     break;
-                                WSTACK_PUSH(s, PRT_COMMA);
+                                ESTACK_PUSH(s, PRT_COMMA);
                             }
                         } else {
-                            WSTACK_PUSH2(s, head[n], PRT_TERM);
+                            ESTACK_PUSH2(s, head[n], PRT_TERM);
                         }
                         if (--n == 0)
                             break;
-                        WSTACK_PUSH(s, PRT_COMMA);
+                        ESTACK_PUSH(s, PRT_COMMA);
                     }
                     break;
                 }
@@ -805,7 +800,7 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
     }
 
  L_done:
-    DESTROY_WSTACK(s);
+    DESTROY_ESTACK(s);
     return res;
 }
 

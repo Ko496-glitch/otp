@@ -497,7 +497,11 @@ typedef Sint SWord;
 #define ERTS_SINT_MAX ERTS_SWORD_MAX
 
 typedef const void *ErtsCodePtr;
+#ifdef __CHERI_PURE_CAPABILITY__
+typedef Eterm BeamInstr;
+#else
 typedef UWord BeamInstr;
+#endif
 
 #ifndef HAVE_INT64
 #  if SIZEOF_LONG == 8

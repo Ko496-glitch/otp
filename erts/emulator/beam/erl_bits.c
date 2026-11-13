@@ -119,7 +119,7 @@ static void check_match_buffer(const ErlSubBits *sb)
         ASSERT(!((br->val)->intern.flags &
                  (BIN_FLAG_WRITABLE | BIN_FLAG_ACTIVE_WRITER)));
         size = NBITS((br->val)->orig_size);
-        orig_base = (byte*)(sb->base_flags & ~ERL_SUB_BITS_FLAG_MASK);
+        orig_base = erl_sub_bits_get_base(sb);
     } else {
         const ErlHeapBits *hb = (ErlHeapBits*)unboxed;
         size = hb->size;
@@ -2073,7 +2073,7 @@ void erts_pin_writable_binary(ErlSubBits *sb, BinRef *br) {
             }
         }
 
-        sb->base_flags = (UWord)refc_binary->orig_bytes;
+        sb->base_flags = (Eterm)refc_binary->orig_bytes;
     }
 
     ASSERT(erl_sub_bits_is_normal(sb));
@@ -2899,7 +2899,7 @@ erts_shrink_binary_term(Eterm binary, size_t size)
          * differences smaller than that. */
         if (size < (NBYTES(sb->end) + 8)) {
             br->val = erts_bin_realloc(br->val, size);
-            sb->base_flags = (UWord)&(br->val)->orig_bytes[0];
+            sb->base_flags = (Eterm)&(br->val)->orig_bytes[0];
         }
     }
 

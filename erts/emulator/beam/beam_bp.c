@@ -2174,7 +2174,7 @@ set_function_break(ErtsCodeInfo *ci,
         g->to_insert = NULL;
 
         if (!ci->gen_bp) {
-            const UWord *instr_word = (const UWord *)erts_codeinfo_to_code(ci);
+            const BeamInstr *instr_word = (const BeamInstr *)erts_codeinfo_to_code(ci);
 
 #ifdef BEAMASM
             /* The orig_instr is only used in global tracing for BEAMASM and
@@ -2185,7 +2185,9 @@ set_function_break(ErtsCodeInfo *ci,
              * erts_set_trace_pattern. */
             g->orig_instr = instr_word[2];
 #else
+            #if !defined(__CHERI_PURE_CAPABILITY__)
             ERTS_CT_ASSERT(sizeof(UWord) == sizeof(BeamInstr));
+#endif
             if (break_flags == ERTS_BPF_GLOBAL_TRACE) {
                 g->orig_instr = BeamOpCodeAddr(op_trace_jump_W);
             }

@@ -739,7 +739,7 @@ extern Eterm ERTS_GLOBAL_LIT_EMPTY_TUPLE;
 #define _PID_SER_SIZE		(_PID_DATA_SIZE - _PID_NUM_SIZE)
 #define _PID_NUM_SIZE 		28
 
-#define _PID_DATA_SIZE		(ERTS_SIZEOF_TERM*8 - _TAG_IMMED1_SIZE)
+#define _PID_DATA_SIZE		(SIZEOF_LONG*8 - _TAG_IMMED1_SIZE)
 #define _PID_DATA_SHIFT		(_TAG_IMMED1_SIZE)
 
 #define _GET_PID_DATA(X)	_GETBITS((X),_PID_DATA_SHIFT,_PID_DATA_SIZE)
@@ -787,7 +787,7 @@ _ET_DECLARE_CHECKED(struct erl_node_*,internal_pid_node,Eterm)
  */
 #define _PORT_NUM_SIZE		_PORT_DATA_SIZE
 
-#define _PORT_DATA_SIZE		(ERTS_SIZEOF_TERM*8 - _TAG_IMMED1_SIZE)
+#define _PORT_DATA_SIZE		(SIZEOF_LONG*8 - _TAG_IMMED1_SIZE)
 #define _PORT_DATA_SHIFT	(_TAG_IMMED1_SIZE)
 
 #define _GET_PORT_DATA(X)	_GETBITS((X),_PORT_DATA_SHIFT,_PORT_DATA_SIZE)
@@ -907,6 +907,10 @@ typedef struct {
 #if ERTS_ENDIANNESS > 0
     Uint32 marker;
 #endif
+#if defined(__CHERI_PURE_CAPABILITY__)
+    /* Keep PID and magic reference sizes, hence headers, distinct. */
+    Eterm cheri_pid_ref_padding;
+#endif
 } ErtsPRefThing;
 
 typedef struct {
@@ -981,7 +985,7 @@ do {									\
 #endif
 #define write_magic_ref_thing(Hp, Ohp, Binp)				\
 do {									\
-  ((ErtsMRefThing *) (Hp))->header = ERTS_REF_THING_HEADER;		\
+  ((ErtsMRefThing *) (Hp))->header = ERTS_WRITE_MAGIC_REF_HEADER;		\
   ((ErtsMRefThing *) (Hp))->mb = (Binp);				\
   ((ErtsMRefThing *) (Hp))->next = (Ohp)->first;			\
   (Ohp)->first = (struct erl_off_heap_header*) (Hp);			\
@@ -1005,6 +1009,13 @@ do {									\
 
 #endif /* !ERTS_ENDIANNESS */
 
+#if defined(__CHERI_PURE_CAPABILITY__)
+#define ERTS_INIT_PID_REF_PADDING(Hp) \
+    (((ErtsPRefThing *)(Hp))->cheri_pid_ref_padding = (Eterm)0)
+#else
+#define ERTS_INIT_PID_REF_PADDING(Hp) ((void)0)
+#endif
+
 #define write_pid_ref_thing(Hp, R0, R1, R2, PID)                        \
 do {									\
   ((ErtsPRefThing *) (Hp))->header = ERTS_PID_REF_THING_HEADER;		\
@@ -1015,6 +1026,7 @@ do {									\
   ((ErtsPRefThing *) (Hp))->num[3] = (Uint32) ((PID) & 0xffffffff);     \
   ((ErtsPRefThing *) (Hp))->num[4] = (Uint32) (((PID) >> 32)            \
                                                & 0xffffffff);           \
+  ERTS_INIT_PID_REF_PADDING(Hp); \
 } while (0)
 
 #define pid_ref_thing_get_pid(Hp)                                       \
@@ -1090,6 +1102,15 @@ typedef union {
 #define ERTS_PID_REF_THING_SIZE (sizeof(ErtsPRefThing)/sizeof(Eterm))
 #define ERTS_MAGIC_REF_THING_SIZE (sizeof(ErtsMRefThing)/sizeof(Eterm))
 #define ERTS_MAX_INTERNAL_REF_SIZE (sizeof(ErtsRefThing)/sizeof(Eterm))
+
+#if defined(__CHERI_PURE_CAPABILITY__)
+typedef char ErtsCheriRefSizesMustDiffer[
+    (ERTS_REF_THING_SIZE != ERTS_PID_REF_THING_SIZE &&
+     ERTS_REF_THING_SIZE != ERTS_MAGIC_REF_THING_SIZE &&
+     ERTS_PID_REF_THING_SIZE != ERTS_MAGIC_REF_THING_SIZE) ? 1 : -1];
+typedef char ErtsCheriPidRefMustUseWholeTerms[
+    (sizeof(ErtsPRefThing) % sizeof(Eterm) == 0) ? 1 : -1];
+#endif
 
 #define make_ref_thing_header(Words) \
     _make_header((Words)-1,_TAG_HEADER_REF)

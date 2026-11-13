@@ -160,7 +160,11 @@ struct _erl_drv_port {
     ErlPortIOQueue ioq;          /* driver accessible i/o queue */
     char *name;		         /* String used in the open */
     erts_driver_t* drv_ptr;
+#ifdef __CHERI_PURE_CAPABILITY__
+    __uintcap_t drv_data;
+#else
     UWord drv_data;
+#endif
     SWord os_pid;                /* Child process ID */
     ErtsProcList *suspended;	 /* List of suspended processes. */
     LineBuf *linebuf;            /* Buffer to hold data not ready for

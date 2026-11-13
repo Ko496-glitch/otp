@@ -763,7 +763,11 @@ erts_open_driver(erts_driver_t* driver,	/* Pointer to driver. */
 	erts_port_release(port);
 	ERTS_OPEN_DRIVER_RET(NULL, error_type, error_number);
     }
+#ifdef __CHERI_PURE_CAPABILITY__
+    port->drv_data = (__uintcap_t) drv_data;
+#else
     port->drv_data = (UWord) drv_data;
+#endif
     ERTS_OPEN_DRIVER_RET(port, 0, 0);
 
 #undef ERTS_OPEN_DRIVER_RET
@@ -865,7 +869,11 @@ driver_create_port(ErlDrvPort creator_port_ix, /* Creating port */
 	creator_port->xports = xplp;
     }
 
+#ifdef __CHERI_PURE_CAPABILITY__
+    port->drv_data = (__uintcap_t) drv_data;
+#else
     port->drv_data = (UWord) drv_data;
+#endif
 
     return ERTS_Port2ErlDrvPort(port);
 }

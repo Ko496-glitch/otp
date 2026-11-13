@@ -688,7 +688,7 @@ erts_encode_dist_ext_size(Eterm term,
 
     sz = *szp;
 
-    if (!ctx->wstack.wstart) {
+    if (!ctx->wstack.start) {
         /*
          * First call for this 'term'. We might however encode
          * multiple terms and this might not be the first term
@@ -766,7 +766,7 @@ int erts_encode_dist_ext(Eterm term, byte **ext, Uint64 flags, ErtsAtomCacheMap 
     int res;
     ASSERT(ctx);
     
-    if (!ctx->wstack.wstart) {
+    if (!ctx->wstack.start) {
         ctx->cptr = *ext;
 #ifndef ERTS_DEBUG_USE_DIST_SEP
 	if (!(flags & (DFLAG_DIST_HDR_ATOM_CACHE|DFLAG_PENDING_CONNECT|DFLAG_FRAGMENTS)))
@@ -2351,10 +2351,10 @@ static int ttb_context_destructor(Binary *context_bin)
 	context->alive = 0;
 	switch (context->state) {
 	case TTBSize:
-	    DESTROY_SAVED_WSTACK(&context->s.sc.wstack);
+	    DESTROY_SAVED_ESTACK(&context->s.sc.wstack);
 	    break;
 	case TTBEncode:
-	    DESTROY_SAVED_WSTACK(&context->s.ec.wstack);
+	    DESTROY_SAVED_ESTACK(&context->s.ec.wstack);
             /* Set to NULL if ever made alive! */
             if (context->s.ec.result_bin != NULL) {
                 ASSERT(erts_refc_read(&(context->s.ec.result_bin->intern.refc),
@@ -3254,11 +3254,11 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
              Uint64 dflags,
 	     struct erl_off_heap_header** off_heap, Sint *reds, byte **res)
 {
-    DECLARE_WSTACK(s);
+    DECLARE_ESTACK(s);
     Uint n;
     Uint i;
     Uint j;
-    Uint* ptr;
+    Eterm* ptr;
     Eterm val;
     FloatDef f;
     register Sint r = 0;
@@ -3271,12 +3271,12 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
     Eterm* next_map_element = NULL;
 
     if (ctx) {
-	WSTACK_CHANGE_ALLOCATOR(s, ERTS_ALC_T_SAVED_ESTACK);
+	ESTACK_CHANGE_ALLOCATOR(s, ERTS_ALC_T_SAVED_ESTACK);
 	r = *reds;
         use_iov = !!ctx->iov;
 
-	if (ctx->wstack.wstart) { /* restore saved stacks and byte pointer */
-	    WSTACK_RESTORE(s, &ctx->wstack);
+	if (ctx->wstack.start) { /* restore saved stacks and byte pointer */
+	    ESTACK_RESTORE(s, &ctx->wstack);
 	    ep = ctx->ep;
 	    obj = ctx->obj;
             map_array = ctx->map_array;
@@ -3319,10 +3319,10 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
     goto L_jump_start;
 
  outer_loop:
-    while (!WSTACK_ISEMPTY(s)) {
-	obj = WSTACK_POP(s);
+    while (!ESTACK_ISEMPTY(s)) {
+	obj = ESTACK_POP(s);
 
-	switch (val = WSTACK_POP(s)) {
+	switch (val = ESTACK_POP(s)) {
 	case ENC_TERM:
 	    break;
 	case ENC_ONE_CONS:
@@ -3330,20 +3330,20 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 	    {
 		Eterm* cons = list_val(obj);
 		Eterm tl;
-                Uint len_cnt = WSTACK_POP(s);
+                Uint len_cnt = ESTACK_POP(s);
 
 		obj = CAR(cons);
 		tl = CDR(cons);
                 if (is_list(tl)) {
                     len_cnt++;
-                    WSTACK_PUSH3(s, len_cnt, ENC_ONE_CONS, tl);
+                    ESTACK_PUSH3(s, len_cnt, ENC_ONE_CONS, tl);
                 }
                 else {
-                    byte* list_lenp = (byte*) WSTACK_POP(s);
+                    byte* list_lenp = (byte*) ESTACK_POP(s);
 		    ASSERT(list_lenp[-1] == LIST_EXT);
                     put_int32(len_cnt, list_lenp);
 
-                    WSTACK_PUSH2(s, ENC_TERM, tl);
+                    ESTACK_PUSH2(s, ENC_TERM, tl);
                 }
 	    }
 	    break;
@@ -3367,18 +3367,17 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 	    goto outer_loop;
 	case ENC_BIN_COPY: {
             Uint size = (Uint)obj;
-            Uint src_offset = WSTACK_POP(s);
-            Uint dst_offset = WSTACK_POP(s);
-            byte* src = (byte*) WSTACK_POP(s);
-            byte* dst = (byte*) WSTACK_POP(s);
+            Uint src_offset = ESTACK_POP(s);
+            Uint dst_offset = ESTACK_POP(s);
+            byte* src = (byte*) ESTACK_POP(s);
+            byte* dst = (byte*) ESTACK_POP(s);
             if (size > (r * TERM_TO_BINARY_MEMCPY_FACTOR)) {
                 Uint n = r * TERM_TO_BINARY_MEMCPY_FACTOR;
                 copy_binary_to_buffer(dst, dst_offset, src, src_offset, n);
                 src_offset += n;
                 dst_offset += n;
                 size -= n;
-                WSTACK_PUSH6(s, (UWord)dst, (UWord)src, dst_offset, src_offset,
-                             ENC_BIN_COPY, size);
+                do { ESTACK_RESERVE(s, 6); ESTACK_FAST_PUSH(s, (Eterm)dst); ESTACK_FAST_PUSH(s, (Eterm)src); ESTACK_FAST_PUSH(s, dst_offset); ESTACK_FAST_PUSH(s, src_offset); ESTACK_FAST_PUSH(s, ENC_BIN_COPY); ESTACK_FAST_PUSH(s, size); } while (0);
                 obj = THE_NON_VALUE;
                 r = 0; /* yield */
                 break;
@@ -3390,15 +3389,14 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 	}
 	case ENC_MAP_PAIR: {
 	    Uint pairs_left = obj;
-	    Eterm *vptr = (Eterm*) WSTACK_POP(s);
-	    Eterm *kptr = (Eterm*) WSTACK_POP(s);
+	    Eterm *vptr = (Eterm*) ESTACK_POP(s);
+	    Eterm *kptr = (Eterm*) ESTACK_POP(s);
 
 	    obj = *kptr;
 	    if (--pairs_left > 0) {
-		WSTACK_PUSH4(s, (UWord)(kptr+1), (UWord)(vptr+1),
-			     ENC_MAP_PAIR, pairs_left);
+		ESTACK_PUSH4(s, (Eterm)(kptr+1), (Eterm)(vptr+1), ENC_MAP_PAIR, pairs_left);
 	    }
-	    WSTACK_PUSH2(s, ENC_TERM, *vptr);
+	    ESTACK_PUSH2(s, ENC_TERM, *vptr);
 	    break;
 	}
 	case ENC_HASHMAP_NODE:
@@ -3409,7 +3407,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     *next_map_element++ = CDR(ptr);
                     goto outer_loop;
                 }
-		WSTACK_PUSH2(s, ENC_TERM, CDR(ptr));
+		ESTACK_PUSH2(s, ENC_TERM, CDR(ptr));
 		obj = CAR(ptr);
 	    }
             else if (is_tuple(obj)) { /* collision node */
@@ -3418,11 +3416,11 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                 tpl_sz = arityval(*ptr);
                 ASSERT(tpl_sz >= 2);
                 ptr++;
-                WSTACK_RESERVE(s, tpl_sz * 2);
+                ESTACK_RESERVE(s, tpl_sz * 2);
                 while(tpl_sz--) {
                     ASSERT(is_list(*ptr));
-                    WSTACK_FAST_PUSH(s, ENC_HASHMAP_NODE);
-                    WSTACK_FAST_PUSH(s, *ptr++);
+                    ESTACK_FAST_PUSH(s, ENC_HASHMAP_NODE);
+                    ESTACK_FAST_PUSH(s, *ptr++);
                 }
                 goto outer_loop;
             }
@@ -3443,7 +3441,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     ASSERT(n < 64); /* Conservative assertion. */
                     qsort(map_array, n/2, 2*sizeof(Eterm),
                           (int (*)(const void *, const void *)) map_key_compare);
-                    WSTACK_PUSH2(s, ENC_PUSH_SORTED_MAP, THE_NON_VALUE);
+                    ESTACK_PUSH2(s, ENC_PUSH_SORTED_MAP, THE_NON_VALUE);
                     goto outer_loop;
                 } else {
                     /* Use yieldable qsort since the number of elements
@@ -3462,10 +3460,10 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                                                 (int (*)(const void *, const void *)) map_key_compare);
                     if (ctx->ycf_yield_state) {
                         r = 0;
-                        WSTACK_PUSH2(s, ENC_CONTINUE_SORTING_MAP, THE_NON_VALUE);
+                        ESTACK_PUSH2(s, ENC_CONTINUE_SORTING_MAP, THE_NON_VALUE);
                         break;
                     } else {
-                        WSTACK_PUSH2(s, ENC_PUSH_SORTED_MAP, THE_NON_VALUE);
+                        ESTACK_PUSH2(s, ENC_PUSH_SORTED_MAP, THE_NON_VALUE);
                         r = num_reductions;
                         goto outer_loop;
                     }
@@ -3480,10 +3478,10 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                                             NULL);
                 if (ctx->ycf_yield_state) {
                     r = 0;
-                    WSTACK_PUSH2(s, ENC_CONTINUE_SORTING_MAP, THE_NON_VALUE);
+                    ESTACK_PUSH2(s, ENC_CONTINUE_SORTING_MAP, THE_NON_VALUE);
                     break;
                 } else {
-                    WSTACK_PUSH2(s, ENC_PUSH_SORTED_MAP, THE_NON_VALUE);
+                    ESTACK_PUSH2(s, ENC_PUSH_SORTED_MAP, THE_NON_VALUE);
                     r = num_reductions;
                     goto outer_loop;
                 }
@@ -3491,11 +3489,11 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
         case ENC_PUSH_SORTED_MAP: /* option `deterministic` */
             {
                 n = next_map_element - map_array;
-                WSTACK_RESERVE(s, 2*n);
+                ESTACK_RESERVE(s, 2*n);
                 ptr = next_map_element - 1;
                 do {
-                    WSTACK_FAST_PUSH(s, ENC_TERM);
-                    WSTACK_FAST_PUSH(s, *ptr);
+                    ESTACK_FAST_PUSH(s, ENC_TERM);
+                    ESTACK_FAST_PUSH(s, *ptr);
                     ptr--;
                 } while (ptr > map_array);
                 obj = *ptr;
@@ -3514,7 +3512,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 	    {
 		Eterm* ptr = (Eterm *) obj;
 		obj = *ptr++;
-		WSTACK_PUSH2(s, val-1, (UWord)ptr);
+		ESTACK_PUSH2(s, val-1, (Eterm)ptr);
 	    }
 	    break;
 	}
@@ -3525,7 +3523,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 	    ctx->ep = ep;
             ctx->map_array = map_array;
             ctx->next_map_element = next_map_element;
-	    WSTACK_SAVE(s, &ctx->wstack);
+	    ESTACK_SAVE(s, &ctx->wstack);
 	    return -1;
 	}
 
@@ -3716,7 +3714,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 		    r -= i/2;
 		    *ep++ = LIST_EXT;
                     /* Patch list length when we find end of list */
-                    WSTACK_PUSH2(s, (UWord)ep, 1);
+                    ESTACK_PUSH2(s, (Eterm)ep, 1);
 		    ep += 4;
 		    goto encode_one_cons;
 		}
@@ -3738,7 +3736,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 	    }
 	    if (i > 0) {
                 ASSERT(ENC_LAST_ARRAY_ELEMENT+i-1 >= ENC_LAST_ARRAY_ELEMENT);
-		WSTACK_PUSH2(s, ENC_LAST_ARRAY_ELEMENT+i-1, (UWord)ptr);
+		ESTACK_PUSH2(s, ENC_LAST_ARRAY_ELEMENT+i-1, (Eterm)ptr);
 	    }
 	    break;
 
@@ -3761,11 +3759,10 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                             *next_map_element++ = *kptr++;
                             *next_map_element++ = *vptr++;
                         }
-                        WSTACK_PUSH2(s, ENC_START_SORTING_MAP, THE_NON_VALUE);
+                        ESTACK_PUSH2(s, ENC_START_SORTING_MAP, THE_NON_VALUE);
                     }
                     else {
-                        WSTACK_PUSH4(s, (UWord)kptr, (UWord)vptr,
-                                     ENC_MAP_PAIR, size);
+                        ESTACK_PUSH4(s, (Eterm)kptr, (Eterm)vptr, ENC_MAP_PAIR, size);
                     }
                 }
 	    } else {
@@ -3793,7 +3790,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
 
                         ASSERT(map_array == NULL);
                         next_map_element = map_array = alloc_map_array(*ptr);
-                        WSTACK_PUSH2(s, ENC_START_SORTING_MAP, THE_NON_VALUE);
+                        ESTACK_PUSH2(s, ENC_START_SORTING_MAP, THE_NON_VALUE);
                     }
 		    node_sz = 16;
 		    break;
@@ -3804,7 +3801,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     if (dflags & DFLAG_DETERMINISTIC) {
                         ASSERT(map_array == NULL);
                         next_map_element = map_array = alloc_map_array(*ptr);
-                        WSTACK_PUSH2(s, ENC_START_SORTING_MAP, THE_NON_VALUE);
+                        ESTACK_PUSH2(s, ENC_START_SORTING_MAP, THE_NON_VALUE);
                     }
                     ERTS_FALLTHROUGH();
 		case HAMT_SUBTAG_NODE_BITMAP:
@@ -3815,10 +3812,10 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     erts_exit(ERTS_ERROR_EXIT, "bad header\r\n");
                 }
 		ptr++;
-		WSTACK_RESERVE(s, node_sz*2);
+		ESTACK_RESERVE(s, node_sz*2);
 		while(node_sz--) {
-                    WSTACK_FAST_PUSH(s, ENC_HASHMAP_NODE);
-                    WSTACK_FAST_PUSH(s, *ptr++);
+                    ESTACK_FAST_PUSH(s, ENC_HASHMAP_NODE);
+                    ESTACK_FAST_PUSH(s, *ptr++);
 		}
 	    }
 	    break;
@@ -3945,8 +3942,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     ep += wire_size;
 
                     if (ctx && wire_size > r * TERM_TO_BINARY_MEMCPY_FACTOR) {
-                        WSTACK_PUSH6(s, (UWord)data_dst, (UWord)base,
-                                     0, offset, ENC_BIN_COPY, size);
+                        do { ESTACK_RESERVE(s, 6); ESTACK_FAST_PUSH(s, (Eterm)data_dst); ESTACK_FAST_PUSH(s, (Eterm)base); ESTACK_FAST_PUSH(s, 0); ESTACK_FAST_PUSH(s, offset); ESTACK_FAST_PUSH(s, ENC_BIN_COPY); ESTACK_FAST_PUSH(s, size); } while (0);
                     } else {
                         copy_binary_to_buffer(data_dst, 0, base, offset, size);
                     }
@@ -3972,8 +3968,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     int ei;
 
                     *ep++ = NEW_FUN_EXT;
-                    WSTACK_PUSH2(s, ENC_PATCH_FUN_SIZE,
-                                (UWord) ep); /* Position for patching in size */
+                    ESTACK_PUSH2(s, ENC_PATCH_FUN_SIZE, (Eterm) ep); /* Position for patching in size */
                     ep += 4;
                     *ep = fun_arity(funp);
                     ep += 1;
@@ -3989,7 +3984,7 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                     ep = enc_pid(acmp, erts_init_process_id, ep, dflags);
 
                     for (ei = fun_num_free(funp)-1; ei >= 0; ei--) {
-                        WSTACK_PUSH2(s, ENC_TERM, (UWord) funp->env[ei]);
+                        ESTACK_PUSH2(s, ENC_TERM, (Eterm) funp->env[ei]);
                     }
                 } else {
                     const Export *exp = funp->entry.exp;
@@ -4030,15 +4025,15 @@ enc_term_int(TTBEncodeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj, byte* ep,
                 values = instance->values;
 
                 for (Sint i = size-1; i >= 0; i--) {
-                    WSTACK_PUSH2(s, ENC_TERM, (UWord) values[unsigned_val(order[i])]);
+                    ESTACK_PUSH2(s, ENC_TERM, (Eterm) values[unsigned_val(order[i])]);
                 }
             }
             break;
         }
     }
-    DESTROY_WSTACK(s);
+    DESTROY_ESTACK(s);
     if (ctx) {
-	ASSERT(ctx->wstack.wstart == NULL);
+	ASSERT(ctx->wstack.start == NULL);
 	*reds = r;
         if (use_iov)
             store_in_vec(ctx, ep, NULL, THE_NON_VALUE, NULL, 0);
@@ -5579,7 +5574,7 @@ static ErtsExtSzRes
 encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 		       Uint64 dflags, Sint *reds, Uint *res)
 {
-    DECLARE_WSTACK(s);
+    DECLARE_ESTACK(s);
     Uint m, i, arity;
     Uint result = *res;
     Sint r = 0;
@@ -5590,12 +5585,12 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
             result += 5;
     }
     else {
-	WSTACK_CHANGE_ALLOCATOR(s, ERTS_ALC_T_SAVED_ESTACK);
+	ESTACK_CHANGE_ALLOCATOR(s, ERTS_ALC_T_SAVED_ESTACK);
 	r = *reds;
 
         vlen = ctx->vlen;
         
-	if (!ctx->wstack.wstart) {
+	if (!ctx->wstack.start) {
             ctx->last_result = result;
             if (dflags & DFLAG_LOCAL_EXT) {
                 result += 5;
@@ -5604,7 +5599,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
             }
         }
         else { /* restore saved stack */
-	    WSTACK_RESTORE(s, &ctx->wstack);
+	    ESTACK_RESTORE(s, &ctx->wstack);
 	    result = ctx->result;
 	    obj = ctx->obj;
 	}
@@ -5623,7 +5618,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 	    ctx->obj = obj;
 	    ctx->result = result;
             ctx->vlen = vlen;
-	    WSTACK_SAVE(s, &ctx->wstack);
+	    ESTACK_SAVE(s, &ctx->wstack);
 	    return ERTS_EXT_SZ_YIELD;
 	}
 	switch (tag_val_def(obj)) {
@@ -5700,7 +5695,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 		result += m + 2 + 1;
 	    } else {
 		result += 5;
-		WSTACK_PUSH2(s, (UWord)CDR(list_val(obj)), (UWord)LIST_TAIL_OP);
+		ESTACK_PUSH2(s, (Eterm)CDR(list_val(obj)), (Eterm)LIST_TAIL_OP);
 		obj = CAR(list_val(obj));
 		continue; /* big loop */
 	    }
@@ -5716,8 +5711,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 		    result += 1 + 4;
 		}
 		if (arity > 1) {
-		    WSTACK_PUSH2(s, (UWord) (ptr + 2),
-				    (UWord) TERM_ARRAY_OP(arity-1));
+		    ESTACK_PUSH2(s, (Eterm) (ptr + 2), (Eterm) TERM_ARRAY_OP(arity-1));
 		}
                 else if (arity == 0) {
 		    break;
@@ -5733,10 +5727,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 		result += 1 + 4; /* tag + 4 bytes size */
 
                 if (size) {
-		    WSTACK_PUSH4(s, (UWord) flatmap_get_values(mp),
-				    (UWord) TERM_ARRAY_OP(size),
-		                    (UWord) flatmap_get_keys(mp),
-				    (UWord) TERM_ARRAY_OP(size));
+		    ESTACK_PUSH4(s, (Eterm) flatmap_get_values(mp), (Eterm) TERM_ARRAY_OP(size), (Eterm) flatmap_get_keys(mp), (Eterm) TERM_ARRAY_OP(size));
 		}
 	    } else {
 		Eterm *ptr;
@@ -5764,16 +5755,16 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 		}
 
                 ptr++;
-                WSTACK_RESERVE(s, node_sz * 2);
+                ESTACK_RESERVE(s, node_sz * 2);
                 while(node_sz--) {
                     Eterm node = *ptr++;
 
                     if (is_list(node) || is_tuple(node)) {
-                        WSTACK_FAST_PUSH(s, (UWord)node);
-                        WSTACK_FAST_PUSH(s, (UWord)HASHMAP_NODE_OP);
+                        ESTACK_FAST_PUSH(s, (Eterm)node);
+                        ESTACK_FAST_PUSH(s, (Eterm)HASHMAP_NODE_OP);
                     } else {
                         ASSERT(is_map(node));
-                        WSTACK_FAST_PUSH(s, node);
+                        ESTACK_FAST_PUSH(s, node);
                     }
                 }
             }
@@ -5798,7 +5789,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
             wire_size = NBYTES(size);
 
             if (wire_size >= ERTS_UINT32_MAX) {
-                WSTACK_DESTROY(s);
+                DESTROY_ESTACK(s);
                 return ERTS_EXT_SZ_SYSTEM_LIMIT;
             }
 
@@ -5895,8 +5886,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
                     result += encode_pid_size(acmp, erts_init_process_id, dflags);
 
                     if (fun_num_free(funp) > 1) {
-                        WSTACK_PUSH2(s, (UWord) (funp->env + 1),
-                                    (UWord) TERM_ARRAY_OP(fun_num_free(funp)-1));
+                        ESTACK_PUSH2(s, (Eterm) (funp->env + 1), (Eterm) TERM_ARRAY_OP(fun_num_free(funp)-1));
                     }
 
                     if (fun_num_free(funp) != 0) {
@@ -5938,8 +5928,7 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 
                 values = instance->values;
                 if (size > 1) {
-                    WSTACK_PUSH2(s, (UWord) (values + 1),
-                                 (UWord) TERM_ARRAY_OP(size-1));
+                    ESTACK_PUSH2(s, (Eterm) (values + 1), (Eterm) TERM_ARRAY_OP(size-1));
                 }
 
                 if (size != 0) {
@@ -5954,26 +5943,26 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
 		     obj);
 	}
 
-	if (WSTACK_ISEMPTY(s)) {
+	if (ESTACK_ISEMPTY(s)) {
 	    break;
 	}
-	obj = (Eterm) WSTACK_POP(s);
+	obj = (Eterm) ESTACK_POP(s);
 
         if (is_header(obj)) {
             switch (obj) {
             case LIST_TAIL_OP:
-		obj = (Eterm) WSTACK_POP(s);
+		obj = (Eterm) ESTACK_POP(s);
 		if (is_list(obj)) {
 		    Eterm* cons = list_val(obj);
 
-		    WSTACK_PUSH2(s, (UWord)CDR(cons), (UWord)LIST_TAIL_OP);
+		    ESTACK_PUSH2(s, (Eterm)CDR(cons), (Eterm)LIST_TAIL_OP);
 		    obj = CAR(cons);
 		}
 		break;
 	    case HASHMAP_NODE_OP: {
                 Eterm *cons;
 
-                obj = (Eterm)WSTACK_POP(s);
+                obj = (Eterm)ESTACK_POP(s);
 
                 if (is_tuple(obj)) {
                     /* Collision node */
@@ -5984,11 +5973,11 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
                     node_size = arityval(*node_terms);
                     ASSERT(node_size >= 2);
 
-                    WSTACK_RESERVE(s, node_size * 2);
+                    ESTACK_RESERVE(s, node_size * 2);
                     for (Uint i = 1; i < node_size; i++) {
                          ASSERT(is_list(node_terms[i]));
-                         WSTACK_FAST_PUSH(s, (UWord)node_terms[i]);
-                         WSTACK_FAST_PUSH(s, (UWord)HASHMAP_NODE_OP);
+                         ESTACK_FAST_PUSH(s, (Eterm)node_terms[i]);
+                         ESTACK_FAST_PUSH(s, (Eterm)HASHMAP_NODE_OP);
                     }
 
                     /* The last collision leaf must be handled below, or it
@@ -6002,27 +5991,26 @@ encode_size_struct_int(TTBSizeContext* ctx, ErtsAtomCacheMap *acmp, Eterm obj,
                     /* Leaf node */
                     cons = list_val(obj);
 
-                    WSTACK_PUSH(s, CDR(cons));
+                    ESTACK_PUSH(s, CDR(cons));
                     obj = CAR(cons);
                 }
                 break;
             }
 	    case TERM_ARRAY_OP(1):
-		obj = *(Eterm*)WSTACK_POP(s);
+		obj = *(Eterm*)ESTACK_POP(s);
 		break;
 	    default: { /* TERM_ARRAY_OP(N) when N > 1 */
-		Eterm* ptr = (Eterm*) WSTACK_POP(s);
-		WSTACK_PUSH2(s, (UWord) (ptr+1),
-			        (UWord) TERM_ARRAY_OP_DEC(obj));
+		Eterm* ptr = (Eterm*) ESTACK_POP(s);
+		ESTACK_PUSH2(s, (Eterm) (ptr+1), (Eterm) TERM_ARRAY_OP_DEC(obj));
 		obj = *ptr;
 	    }
 	    }
 	}
     }
 
-    WSTACK_DESTROY(s);
+    DESTROY_ESTACK(s);
     if (ctx) {
-	ASSERT(ctx->wstack.wstart == NULL);
+	ASSERT(ctx->wstack.start == NULL);
 	*reds = r < 0 ? 0 : r;
 
         if (vlen >= 0) {

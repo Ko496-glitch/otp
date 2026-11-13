@@ -113,13 +113,20 @@ typedef enum {
 
 typedef struct ErtsHLTimer_ ErtsHLTimer;
 
-#define ERTS_HLT_PFLG_RED		(((UWord) 1) << 0)
-#define ERTS_HLT_PFLG_SAME_TIME		(((UWord) 1) << 1)
+/* Parent addresses must preserve capability provenance. */
+#ifdef __CHERI_PURE_CAPABILITY__
+typedef __uintcap_t ErtsHLTParentWord;
+#else
+typedef UWord ErtsHLTParentWord;
+#endif
+
+#define ERTS_HLT_PFLG_RED		(((ErtsHLTParentWord) 1) << 0)
+#define ERTS_HLT_PFLG_SAME_TIME		(((ErtsHLTParentWord) 1) << 1)
 
 #define ERTS_HLT_PFLGS_MASK \
     (ERTS_HLT_PFLG_RED|ERTS_HLT_PFLG_SAME_TIME)
 
-#define ERTS_HLT_PFIELD_NOT_IN_TABLE	(~((UWord) 0))
+#define ERTS_HLT_PFIELD_NOT_IN_TABLE	(~((ErtsHLTParentWord) 0))
 
 typedef struct ErtsBifTimer_ ErtsBifTimer;
 
@@ -129,7 +136,7 @@ typedef struct {
 } ErtsBifTimerList;
 
 typedef struct {
-    UWord parent; /* parent pointer and flags... */
+    ErtsHLTParentWord parent; /* parent capability/address and flags */
     union {
 	struct {
 	    ErtsHLTimer *right;
@@ -144,7 +151,7 @@ typedef struct {
 } ErtsHLTimerTimeTree;
 
 typedef struct {
-    UWord parent; /* parent pointer and flags... */
+    ErtsHLTParentWord parent; /* parent capability/address and flags */
     ErtsBifTimer *right;
     ErtsBifTimer *left;
 } ErtsBifTimerTree;
@@ -367,8 +374,7 @@ refn_is_eq(Uint32 *x, Uint32 *y)
 #define ERTS_RBT_SET_PARENT(T, P)					\
     do {								\
 	ERTS_HLT_ASSERT((((UWord) (P)) & ERTS_HLT_PFLGS_MASK) == 0);	\
-	(T)->time.tree.parent &= ERTS_HLT_PFLGS_MASK;			\
-	(T)->time.tree.parent |= (UWord) (P);				\
+	(T)->time.tree.parent = ((ErtsHLTParentWord) (P)) | ((UWord) ((T)->time.tree.parent & ERTS_HLT_PFLGS_MASK));				\
     } while (0)
 #define ERTS_RBT_GET_RIGHT(T) ((T)->time.tree.u.t.right)
 #define ERTS_RBT_SET_RIGHT(T, R) ((T)->time.tree.u.t.right = (R))
@@ -396,8 +402,8 @@ same_time_list_insert(ErtsHLTimer **root, ErtsHLTimer *tmr)
 {
     ErtsHLTimer *first = *root;
     if (!first) {
-	ERTS_HLT_ASSERT((((UWord) root) & ERTS_HLT_PFLG_SAME_TIME) == 0);
-	tmr->time.tree.parent = ((UWord) root) | ERTS_HLT_PFLG_SAME_TIME;
+	ERTS_HLT_ASSERT((((ErtsHLTParentWord) root) & ERTS_HLT_PFLG_SAME_TIME) == 0);
+	tmr->time.tree.parent = ((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME;
 	tmr->time.tree.u.l.next = tmr;
 	tmr->time.tree.u.l.prev = tmr;
 	*root = tmr;
@@ -420,7 +426,7 @@ same_time_list_delete(ErtsHLTimer *tmr)
     next = tmr->time.tree.u.l.next;
 
     ERTS_HLT_ASSERT((tmr->time.tree.parent
-		     == (((UWord) root) | ERTS_HLT_PFLG_SAME_TIME))
+		     == (((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME))
 		    || (tmr->time.tree.parent
 			== ERTS_HLT_PFLG_SAME_TIME));
 
@@ -433,7 +439,7 @@ same_time_list_delete(ErtsHLTimer *tmr)
 	if (root) {
 	    ERTS_HLT_ASSERT(*root == tmr);
 	    *root = next;
-	    next->time.tree.parent = ((UWord) root) | ERTS_HLT_PFLG_SAME_TIME;
+	    next->time.tree.parent = ((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME;
 	}
 	tmr->time.tree.u.l.next->time.tree.u.l.prev = tmr->time.tree.u.l.prev;
 	tmr->time.tree.u.l.prev->time.tree.u.l.next = next;
@@ -446,7 +452,7 @@ same_time_list_new_root(ErtsHLTimer **root)
     ErtsHLTimer *tmr = *root;
     if (tmr) {
 	ERTS_HLT_ASSERT(root);
-	tmr->time.tree.parent = ((UWord) root) | ERTS_HLT_PFLG_SAME_TIME;
+	tmr->time.tree.parent = ((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME;
     }
 }
 
@@ -463,7 +469,7 @@ same_time_list_foreach_destroy_yielding(ErtsHLTimer **root,
 	return 0;
 
     ERTS_HLT_ASSERT(tmr->time.tree.parent
-		    == (((UWord) root) | ERTS_HLT_PFLG_SAME_TIME));
+		    == (((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME));
 
     end = tmr->time.tree.u.l.prev;
     end->time.tree.u.l.next = NULL;
@@ -472,7 +478,7 @@ same_time_list_foreach_destroy_yielding(ErtsHLTimer **root,
 	ErtsHLTimer *op_tmr = tmr;
 
 	ERTS_HLT_ASSERT((tmr->time.tree.parent
-			 == (((UWord) root) | ERTS_HLT_PFLG_SAME_TIME))
+			 == (((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME))
 			|| (tmr->time.tree.parent
 			    == ERTS_HLT_PFLG_SAME_TIME));
 
@@ -487,7 +493,7 @@ same_time_list_foreach_destroy_yielding(ErtsHLTimer **root,
 	    *root = tmr;
 	    end->time.tree.u.l.next = tmr;
 	    tmr->time.tree.u.l.prev = end;
-	    tmr->time.tree.parent = ((UWord) root) | ERTS_HLT_PFLG_SAME_TIME;
+	    tmr->time.tree.parent = ((ErtsHLTParentWord) root) | ERTS_HLT_PFLG_SAME_TIME;
 	    return 1;
 	}
     }    
@@ -558,8 +564,7 @@ same_time_list_lookup(ErtsHLTimer *root, ErtsHLTimer *x)
 #define ERTS_RBT_SET_PARENT(T, P)					\
     do {								\
 	ERTS_HLT_ASSERT((((UWord) (P)) & ERTS_HLT_PFLGS_MASK) == 0);	\
-	(T)->btm.tree.parent &= ERTS_HLT_PFLGS_MASK;			\
-	(T)->btm.tree.parent |= (UWord) (P);				\
+	(T)->btm.tree.parent = ((ErtsHLTParentWord) (P)) | ((UWord) ((T)->btm.tree.parent & ERTS_HLT_PFLGS_MASK));				\
     } while (0)
 #define ERTS_RBT_GET_RIGHT(T) ((T)->btm.tree.right)
 #define ERTS_RBT_SET_RIGHT(T, R) ((T)->btm.tree.right = (R))
@@ -607,8 +612,7 @@ same_time_list_lookup(ErtsHLTimer *root, ErtsHLTimer *x)
 #define ERTS_RBT_SET_PARENT(T, P)					\
     do {								\
 	ERTS_HLT_ASSERT((((UWord) (P)) & ERTS_HLT_PFLGS_MASK) == 0);	\
-	(T)->btm.proc_tree.parent &= ERTS_HLT_PFLGS_MASK;		\
-	(T)->btm.proc_tree.parent |= (UWord) (P);			\
+	(T)->btm.proc_tree.parent = ((ErtsHLTParentWord) (P)) | ((UWord) ((T)->btm.proc_tree.parent & ERTS_HLT_PFLGS_MASK));			\
     } while (0)
 #define ERTS_RBT_GET_RIGHT(T) ((T)->btm.proc_tree.right)
 #define ERTS_RBT_SET_RIGHT(T, R) ((T)->btm.proc_tree.right = (R))

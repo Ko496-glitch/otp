@@ -173,6 +173,12 @@ void** beam_ops;
 #define db(N) (N)
 #define fb(N) ((Sint)(Sint32)(N))
 #define jb(N) ((Sint)(Sint32)(N))
+#ifdef BEAM_WIDE_SHIFT
+#  define BEAM_JUMP_TAB_ELEM(Base, Ix) \
+    ((Sint32)((((const BeamInstr *)(Base))[(Uint)(Ix) >> 1] >> (((Uint)(Ix) & 1) * BEAM_WIDE_SHIFT)) & BEAM_WIDE_MASK))
+#else
+#  define BEAM_JUMP_TAB_ELEM(Base, Ix) (((const Sint32 *)(Base))[Ix])
+#endif
 #define tb(N) (N)
 #define xb(N) (*ADD_BYTE_OFFSET(reg, N))
 #define yb(N) (*ADD_BYTE_OFFSET(E, N))

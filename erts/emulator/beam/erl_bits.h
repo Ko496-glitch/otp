@@ -70,7 +70,7 @@ typedef struct erl_sub_bits {
      *
      * This is placed first to simplify checking whether this is a viable
      * match context. */
-    UWord base_flags;
+        Eterm base_flags;
 
     /* Start and end offset in bits. */
     Uint start;
@@ -114,6 +114,24 @@ erl_sub_bits_update_moved(ErlSubBits *sb, Eterm orig);
 #define erl_sub_bits_was_writable(SubBits)                                    \
     (erl_sub_bits_get_flags(SubBits) & ERL_SUB_BITS_FLAG_VOLATILE)
 
+#if defined(__CHERI_PURE_CAPABILITY__)
+#define erl_sub_bits_clear_writable(SubBits)                                  \
+    (ASSERT(erl_sub_bits_is_writable(SubBits)),                               \
+     (SubBits)->base_flags = (Eterm)__builtin_cheri_address_set(              \
+         (SubBits)->base_flags,                                               \
+         __builtin_cheri_address_get((SubBits)->base_flags) &                 \
+             ~(size_t)ERL_SUB_BITS_FLAG_MUTABLE))
+
+#define erl_sub_bits_get_flags(SubBits)                                       \
+    ((UWord)(__builtin_cheri_address_get((SubBits)->base_flags) &             \
+             (size_t)ERL_SUB_BITS_FLAG_MASK))
+
+#define erl_sub_bits_get_base(SubBits)                                        \
+    ((byte*)__builtin_cheri_address_set(                                      \
+        (SubBits)->base_flags,                                                \
+        __builtin_cheri_address_get((SubBits)->base_flags) &                  \
+            ~(size_t)ERL_SUB_BITS_FLAG_MASK))
+#else
 #define erl_sub_bits_clear_writable(SubBits)                                  \
     (ASSERT(erl_sub_bits_is_writable(SubBits)),                               \
      (SubBits)->base_flags &= ~ERL_SUB_BITS_FLAG_MUTABLE)
@@ -123,6 +141,7 @@ erl_sub_bits_update_moved(ErlSubBits *sb, Eterm orig);
 
 #define erl_sub_bits_get_base(SubBits)                                        \
     ((byte*)((SubBits)->base_flags & ~ERL_SUB_BITS_FLAG_MASK))
+#endif
 
 /** @brief The size in words of an ErlSubBits. */
 #define ERL_SUB_BITS_SIZE (sizeof(ErlSubBits) / sizeof(Eterm))
@@ -383,8 +402,8 @@ Eterm erts_wrap_refc_bitstring(struct erl_off_heap_header **oh,
             /* Match contexts may refer to on-heap bitstrings */              \
             _br = (*_unboxed == HEADER_BIN_REF) ? (BinRef*)_unboxed : NULL;   \
             ASSERT(erl_sub_bits_is_match_context(_sb) || _br);                \
-            if (ERTS_LIKELY(!erl_sub_bits_was_writable(_sb))) {               \
-                Base = (byte*)(_sb->base_flags & ~ERL_SUB_BITS_FLAG_MASK);    \
+                        if (ERTS_LIKELY(!erl_sub_bits_was_writable(_sb))) {               \
+                Base = erl_sub_bits_get_base(_sb);                            \
             } else {                                                          \
                 /* If the source was writable its underlying binary may */    \
                 /* move at any point, so we need to follow it instead of */   \
@@ -392,7 +411,7 @@ Eterm erts_wrap_refc_bitstring(struct erl_off_heap_header **oh,
                 ASSERT(_br);                                                  \
                 Base = (byte*)((_br->val)->orig_bytes);                       \
                 if (!((_br->val)->intern.flags & BIN_FLAG_WRITABLE)) {        \
-                    _sb->base_flags = (UWord)Base;                            \
+                    _sb->base_flags = (Eterm)Base;                            \
                 }                                                             \
             }                                                                 \
             Offset = _sb->start;                                              \
@@ -421,11 +440,11 @@ Eterm erts_wrap_refc_bitstring(struct erl_off_heap_header **oh,
             /* Match contexts may refer to on-heap bitstrings */              \
             _br = (*_unboxed == HEADER_BIN_REF) ? (BinRef*)_unboxed : NULL;   \
             ASSERT(erl_sub_bits_is_match_context(_sb) || _br);                \
-            if (ERTS_LIKELY(_br != NULL)) {                                   \
+                        if (ERTS_LIKELY(_br != NULL)) {                                   \
                 /* Pinning updates base and flags when necessary. */          \
                 erts_pin_writable_binary(_sb, _br);                           \
             }                                                                 \
-            Base = (byte*)(_sb->base_flags & ~ERL_SUB_BITS_FLAG_MASK);        \
+            Base = erl_sub_bits_get_base(_sb);        \
             Offset = _sb->start;                                              \
             Size = _sb->end - _sb->start;                                     \
             RefFlags = _sb->orig & TAG_PTR_MASK__;                            \
@@ -496,7 +515,11 @@ erl_sub_bits_init(ErlSubBits *sb, UWord flags, Eterm orig, const void *base,
      *
      * To handle this corner case, we'll adjust the incoming pointer and shift
      * the start of the bitstring to fit. */
+    #if defined(__CHERI_PURE_CAPABILITY__)
+    Uint adjustment = (Uint)(__builtin_cheri_address_get(base) & (size_t)ERL_SUB_BITS_FLAG_MASK);
+#else
     Uint adjustment = (UWord)base & ERL_SUB_BITS_FLAG_MASK;
+#endif
 
     ASSERT(is_boxed(orig));
     ASSERT(!(flags & ~ERL_SUB_BITS_FLAG_MASK));
@@ -514,7 +537,13 @@ erl_sub_bits_init(ErlSubBits *sb, UWord flags, Eterm orig, const void *base,
     sb->thing_word = HEADER_SUB_BITS;
     sb->start = offset + adjustment * 8;
     sb->end = sb->start + size;
+#if defined(__CHERI_PURE_CAPABILITY__)
+    sb->base_flags = (Eterm)__builtin_cheri_address_set(
+        (void *)base,
+        (__builtin_cheri_address_get(base) - (size_t)adjustment) | (size_t)flags);
+#else
     sb->base_flags = ((UWord)base - adjustment) | flags;
+#endif
     sb->orig = orig;
 }
 
@@ -524,6 +553,16 @@ erl_sub_bits_update_moved(ErlSubBits *sb, Eterm orig)
     Eterm *ptr = ptr_val(orig);
 
     if (thing_subtag(*ptr) == HEAP_BITS_SUBTAG) {
+#if defined(__CHERI_PURE_CAPABILITY__)
+        void *new_base = &((ErlHeapBits*)ptr)->data;
+        size_t flags = (size_t)erl_sub_bits_get_flags(sb);
+
+        ASSERT(erl_sub_bits_is_match_context(sb));
+        ASSERT(!(__builtin_cheri_address_get(new_base) & (size_t)ERL_SUB_BITS_FLAG_MASK));
+        sb->base_flags = (Eterm)__builtin_cheri_address_set(
+            new_base,
+            __builtin_cheri_address_get(new_base) | flags);
+#else
         UWord new_base = (UWord)&((ErlHeapBits*)ptr)->data;
 
         /* Only match contexts can refer to on-heap bitstrings, ordinary
@@ -534,6 +573,7 @@ erl_sub_bits_update_moved(ErlSubBits *sb, Eterm orig)
          * according to the base here. */
         ASSERT(!(new_base & ERL_SUB_BITS_FLAG_MASK));
         sb->base_flags = new_base | (sb->base_flags & ERL_SUB_BITS_FLAG_MASK);
+#endif
     }
 }
 

@@ -1396,10 +1396,10 @@ int erts_dsend_context_dtor(Binary* ctx_bin)
     ErtsDSigSendContext* ctx = ERTS_MAGIC_BIN_DATA(ctx_bin);
     switch (ctx->phase) {
     case ERTS_DSIG_SEND_PHASE_MSG_SIZE:
-	DESTROY_SAVED_WSTACK(&ctx->u.sc.wstack);
+	DESTROY_SAVED_ESTACK(&ctx->u.sc.wstack);
 	break;
     case ERTS_DSIG_SEND_PHASE_MSG_ENCODE:
-	DESTROY_SAVED_WSTACK(&ctx->u.ec.wstack);
+	DESTROY_SAVED_ESTACK(&ctx->u.ec.wstack);
 	break;
     default:;
     }

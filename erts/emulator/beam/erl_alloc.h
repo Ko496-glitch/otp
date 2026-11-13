@@ -512,9 +512,7 @@ static ERTS_INLINE int							\
 NAME##_free(TYPE *p)							\
 {									\
     union erts_qa_##NAME##__ * up;					\
-    up = ((union erts_qa_##NAME##__ *)					\
-	  (((char *) p)							\
-	   - ((char *) &((union erts_qa_##NAME##__ *) 0)->type)));	\
+    up = (union erts_qa_##NAME##__ *) p; \
     if (up > &qa_prealcd_##NAME[ERTS_PRE_ALLOC_SIZE((PASZ))-1]		\
 	|| up < &qa_prealcd_##NAME[0])					\
 	return 0;							\

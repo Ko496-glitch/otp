@@ -240,6 +240,34 @@ ml_cmp_keys(Eterm key1, Eterm key2)
 #define ERTS_RBT_T ErtsMonLnkNode
 #define ERTS_RBT_KEY_T Eterm
 #define ERTS_RBT_FLAGS_T UWord
+#ifdef __CHERI_PURE_CAPABILITY__
+#define ERTS_RBT_INIT_EMPTY_TNODE(T) \
+    do { \
+        (T)->node.tree.parent = NULL; \
+        (T)->node.tree.right = NULL; \
+        (T)->node.tree.left = NULL; \
+        (T)->node.tree.parent_flags = 0; \
+    } while (0)
+#define ERTS_RBT_IS_RED(T) \
+    (!!((T)->node.tree.parent_flags & ERTS_ML_TPFLG_RED))
+#define ERTS_RBT_SET_RED(T) \
+    ((T)->node.tree.parent_flags |= ERTS_ML_TPFLG_RED)
+#define ERTS_RBT_IS_BLACK(T) \
+    (!ERTS_RBT_IS_RED((T)))
+#define ERTS_RBT_SET_BLACK(T) \
+    ((T)->node.tree.parent_flags &= ~ERTS_ML_TPFLG_RED)
+#define ERTS_RBT_GET_FLAGS(T) \
+    ((T)->node.tree.parent_flags & ERTS_ML_TPFLGS_MASK)
+#define ERTS_RBT_SET_FLAGS(T, F) \
+    do { \
+        ERTS_ML_ASSERT((((UWord)(F)) & ~ERTS_ML_TPFLGS_MASK) == 0); \
+        (T)->node.tree.parent_flags = (UWord)(F); \
+    } while (0)
+#define ERTS_RBT_GET_PARENT(T) \
+    ((T)->node.tree.parent)
+#define ERTS_RBT_SET_PARENT(T, P) \
+    ((T)->node.tree.parent = (P))
+#else
 #define ERTS_RBT_INIT_EMPTY_TNODE(T)					\
     do {								\
 	(T)->node.tree.parent = (UWord) NULL;                           \
@@ -270,6 +298,7 @@ ml_cmp_keys(Eterm key1, Eterm key2)
 	(T)->node.tree.parent &= ERTS_ML_TPFLGS_MASK;                  \
 	(T)->node.tree.parent |= (UWord) (P);                           \
     } while (0)
+#endif
 #define ERTS_RBT_GET_RIGHT(T) ((T)->node.tree.right)
 #define ERTS_RBT_SET_RIGHT(T, R) ((T)->node.tree.right = (R))
 #define ERTS_RBT_GET_LEFT(T) ((T)->node.tree.left)

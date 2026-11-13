@@ -1933,7 +1933,32 @@ get_altact_msg_data(ErtsMessage *sig, void **attachedp,
 #ifdef ARCH_64
             ASSERT((((Uint) 1) << 32) > low);
             ASSERT((((Uint) 1) << 32) > high);
+#if defined(__CHERI_PURE_CAPABILITY__)
+            /*
+             * CHERI altact fragment capability:
+             * The info tuple resides in this same fragment allocation.
+             * Preserve its authority when recovering the fragment address.
+             */
+            {
+                Uint addr = (((Uint) high) << 32) | ((Uint) low);
+                Uint base, len;
+
+                attached = __builtin_cheri_address_set((void *) tp, addr);
+                base = __builtin_cheri_base_get(attached);
+                len = __builtin_cheri_length_get(attached);
+
+                if (!__builtin_cheri_tag_get(attached)
+                    || __builtin_cheri_sealed_get(attached)
+                    || addr < base
+                    || addr - base > len
+                    || sizeof(ErlHeapFragment) > len - (addr - base)) {
+                    ERTS_INTERNAL_ERROR(
+                        "Invalid CHERI altact heap fragment capability");
+                }
+            }
+#else
             attached = (void *) ((((Uint) high) << 32) | ((Uint) low));
+#endif
 #else /* ARCH_32 */
             ASSERT((((Uint) 1) << 16) > low);
             ASSERT((((Uint) 1) << 16) > high);

@@ -532,9 +532,16 @@ typedef struct ErtsMonLnkNode__ ErtsMonLnkNode;
 typedef int (*ErtsMonLnkNodeFunc)(ErtsMonLnkNode *, void *, Sint);
 
 typedef struct {
+#ifdef __CHERI_PURE_CAPABILITY__
+    ErtsMonLnkNode *parent;
+#else
     UWord parent; /* Parent ptr and flags... */
+#endif
     ErtsMonLnkNode *right;
     ErtsMonLnkNode *left;
+#ifdef __CHERI_PURE_CAPABILITY__
+    UWord parent_flags;
+#endif
 } ErtsMonLnkTreeNode;
 
 typedef struct {

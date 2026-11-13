@@ -978,7 +978,23 @@ void erts_save_message_in_proc(Process *p, ErtsMessage *msgp)
     }
 
     while (1) {
-	struct erl_off_heap_header *ohhp = hfp->off_heap.first;
+	struct erl_off_heap_header *ohhp;
+#ifdef __CHERI_PURE_CAPABILITY__
+        fprintf(stderr,
+                "[CHERI save_msg] msg=0x%llx attached=0x%llx "
+                "embedded=0x%llx hfp=0x%llx "
+                "tag=%d sealed=%d base=0x%llx len=0x%llx perms=0x%llx\n",
+                (unsigned long long)__builtin_cheri_address_get(msgp),
+                (unsigned long long)__builtin_cheri_address_get(msgp->data.attached),
+                (unsigned long long)__builtin_cheri_address_get(&msgp->hfrag),
+                (unsigned long long)__builtin_cheri_address_get(hfp),
+                (int)__builtin_cheri_tag_get(hfp),
+                (int)__builtin_cheri_sealed_get(hfp),
+                (unsigned long long)__builtin_cheri_base_get(hfp),
+                (unsigned long long)__builtin_cheri_length_get(hfp),
+                (unsigned long long)__builtin_cheri_perms_get(hfp));
+#endif
+        ohhp = hfp->off_heap.first;
 	if (ohhp) {
 	    for ( ; ohhp->next; ohhp = ohhp->next)
 		;

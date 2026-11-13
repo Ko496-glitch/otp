@@ -48,8 +48,14 @@ start(_, []) ->
 
     case supervisor:start_link({local, kernel_sup}, kernel, [Mode]) of
 	{ok, Pid} ->
+            erlang:display({cheri_kernel_sup_returned, Pid}),
+            erlang:display(cheri_signal_handler_start),
             ok = erl_signal_handler:start(),
+            erlang:display(cheri_signal_handler_returned),
+            erlang:display(cheri_logger_add_handlers_start),
             ok = logger:add_handlers(kernel),
+            erlang:display(cheri_logger_add_handlers_returned),
+            erlang:display(cheri_kernel_start_returning),
             {ok, Pid, []};
 	Error -> Error
     end.

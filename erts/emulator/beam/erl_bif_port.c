@@ -799,7 +799,7 @@ open_port(Process* p, Eterm name, Eterm settings, int *err_typep, int *err_nump)
     Eterm option;
     Uint arity;
     Eterm* tp;
-    Uint* nargs;
+    Eterm* nargs;
     erts_driver_t* driver;
     char* name_buf = NULL;
     SysDriverOpts opts;

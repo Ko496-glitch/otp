@@ -56,9 +56,26 @@ removing_handler(#{id:=simple}) ->
         undefined ->
             ok;
         Pid ->
+            erlang:display({cheri_simple_monitor_begin, self(), Pid}),
             Ref = erlang:monitor(process,Pid),
+            erlang:display({cheri_simple_monitor_created, self(), Pid, Ref}),
             Pid ! stop,
-            receive {'DOWN',Ref,process,Pid,_} ->
+            erlang:display({cheri_simple_stop_sent, self(), Pid}),
+            CheriWaiter = self(),
+            spawn(fun() ->
+                receive after 2000 -> ok end,
+                erlang:display({cheri_simple_target_snapshot, Pid,
+                    erlang:process_info(Pid,
+                        [status, current_function, current_stacktrace,
+                         message_queue_len, messages])}),
+                erlang:display({cheri_simple_waiter_snapshot, CheriWaiter,
+                    erlang:process_info(CheriWaiter,
+                        [status, current_function, current_stacktrace,
+                         message_queue_len, messages])})
+            end),
+            receive {'DOWN',Ref,process,Pid,CheriReason} ->
+                    erlang:display({cheri_simple_down_received,
+                                    self(), Pid, Ref, CheriReason}),
                     ok
             end
     end.
@@ -112,6 +129,7 @@ init(Starter) ->
 loop(Mode, Buffer) ->
     receive
         stop ->
+            erlang:display({cheri_simple_stop_received, self()}),
             %% We replay the logger messages if there is
             %% a default handler when the simple handler
             %% is removed.
@@ -180,6 +198,7 @@ log_internal(rich = Mode, Log) ->
                            }),
                   erlang:display_string(stdout, lists:flatten(unicode:characters_to_list(Str)))
           end),
+    erlang:display({cheri_formatter_expected, self(), Pid, Ref}),
     receive
         {'DOWN', Ref, _, _, normal} ->
             Mode;
@@ -189,7 +208,28 @@ log_internal(rich = Mode, Log) ->
     after 300 ->
             %% init:terminate/3 sleeps for 500 ms before exiting,
             %% so we wait for 300 ms for the log to happen
+            erlang:display({cheri_formatter_kill, self(), Pid, Ref}),
             exit(Pid, kill),
+            CheriOwner = self(),
+            spawn(fun() ->
+                receive after 1000 -> ok end,
+                case erlang:process_info(CheriOwner, messages) of
+                    {messages, CheriMessages} ->
+                        lists:foreach(
+                          fun({'DOWN', SeenRef, process, SeenPid, Reason}) ->
+                                  erlang:display(
+                                    {cheri_formatter_down_check,
+                                     CheriOwner,
+                                     {expected, Pid, Ref},
+                                     {received, SeenPid, SeenRef, Reason},
+                                     {same_pid, SeenPid =:= Pid},
+                                     {same_ref, SeenRef =:= Ref}});
+                             (_) -> ok
+                          end, CheriMessages);
+                    undefined ->
+                        erlang:display({cheri_formatter_owner_gone, CheriOwner})
+                end
+            end),
             receive
                 {'DOWN', Ref, _, _, normal} ->
                     Mode;
